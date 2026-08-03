@@ -1,0 +1,44 @@
+# Supreme Court jurisprudence on medical bills, payment and non-payment.
+#
+# Fetch with:
+#   python fetch/fetch_seeds.py --file fetch/seeds_billing_jurisprudence.txt --subdir jurisprudence
+# Full-text HTML from the Supreme Court E-Library. URLs verified live 2026-07-29.
+#
+# Already in the corpus (seeds_negligence.txt), squarely on this topic:
+#   Manila Doctors Hospital v. So Un Chua (G.R. 150355) — a hospital's remedies
+#   against a patient who will not pay, and the limits on them.
+
+# --- HMO / health-insurer refusal to pay the hospital bill ---
+# The recurring fact pattern: the patient is billed because the health plan
+# denied the claim. These three set the interpretive rule (a health care
+# agreement is akin to non-life insurance, construed strictly against the
+# provider) and put the burden of proving an exclusion on the payor.
+Blue Cross Health Care v. Olivares (G.R. 169737) - HMO Refusal to Pay, Burden of Proving a Pre-Existing Condition | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/44810
+Fortune Medicare v. Amorin (G.R. 195872) - Reimbursement of Hospital Expenses, Ambiguity Construed Against the HMO | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56685
+Philamcare Health Systems v. Court of Appeals (G.R. 125678) - Health Care Agreement as Non-Life Insurance, Concealment and Denial of Claims | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/50579
+
+# --- PhilHealth reimbursement of provider claims ---
+Philippine Health Insurance Corp. v. Chinese General Hospital (G.R. 163123) - Denied Provider Claims, Filing Periods, Public Interest Over Technicality | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/43021
+
+# --- Who absorbs the mandatory senior-citizen / PWD discount ---
+# These decide whether the 20% discount is a tax credit or merely a tax
+# deduction, i.e. how much of the discounted bill the establishment eats.
+Carlos Superdrug Corp. v. DSWD (G.R. 166494) - Constitutionality of the 20% Senior Citizen Discount as a Tax Deduction | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/43888
+Manila Memorial Park v. Secretary of DSWD (G.R. 175356) - Senior Citizen Discount as Police Power, Not Taking | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56381
+Southern Luzon Drug Corp. v. DSWD (G.R. 199669) - Senior Citizen and PWD Discounts, Tax Deduction Scheme Upheld | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/63029
+Drugstores Association of the Philippines v. National Council on Disability Affairs (G.R. 194561) - 20% PWD Discount on Medicines Upheld | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/62361
+
+# --- What an unpaid bill actually costs once it is sued upon ---
+# The controlling rule on legal interest (6% per annum, BSP-MB Circular 799),
+# which governs any money judgment for an unpaid hospital or professional fee.
+Nacar v. Gallery Frames (G.R. 189871) - Legal Interest on Money Judgments, 6% Per Annum Rule | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56128
+
+# --- The bill of a patient who died: whom can the hospital still pursue? ---
+# The rule these settle: the debt is NOT extinguished by death, but the
+# creditor loses its ordinary collection suit. It must file a money claim in
+# the estate proceeding (Rule 86), and the heirs answer only out of the
+# inheritance — not from their own pockets.
+Alipio v. Court of Appeals (G.R. 134100) - Creditor Cannot Sue the Surviving Spouse, Claim Must Be Filed Against the Estate | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/36251
+Union Bank v. Santibanez (G.R. 149926) - Filing a Money Claim Against the Estate Is Mandatory, Limits of Heirs' Liability | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/43301
+Boston Equity Resources v. Court of Appeals (G.R. 173946) - Suing a Deceased Defendant, Estate as Party, Solidary Obligations | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/55921
+Stronghold Insurance v. Republic-Asahi Glass (G.R. 147561) - Death Does Not Extinguish a Money Obligation, It Passes to the Estate | https://lawphil.net/judjuris/juri2006/jun2006/gr_147561_2006.html

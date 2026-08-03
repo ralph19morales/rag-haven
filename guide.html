@@ -1,0 +1,956 @@
+<title>Understanding Your RAG System — A Beginner's Guide</title>
+<style>
+  /* ============================================================
+     "Gilt on blue buckram" — the palette of a law-library binding.
+     Cool pearl ground, blue-black ink, slate indigo, brass for
+     callouts only. Deliberately not cream-and-terracotta.
+     ============================================================ */
+  :root {
+    --paper:      #eef0f3;   /* cool pearl — blue cast, never cream */
+    --surface:    #fbfcfe;
+    --surface-2:  #e5e9ee;
+    --ink:        #141922;   /* blue-black, not pure black */
+    --ink-soft:   #4d5766;
+    --ink-faint:  #616b7a;
+    --line:       #d5dae1;
+    --line-soft:  #e3e7ec;
+    --accent:     #38476b;   /* slate indigo — the one bold hue */
+    --accent-ink: #2e3c5e;
+    --accent-wash:#e2e7f1;
+    --brass:      #92742f;   /* aged gilt — callouts only */
+    --brass-ink:  #7c6128;
+    --code-bg:    #e7eaef;
+    --code-ink:   #22304d;
+
+    --font-serif: "Charter","Bitstream Charter","Iowan Old Style","Palatino Linotype","Book Antiqua","URW Palladio L",Georgia,serif;
+    --font-ui: ui-sans-serif,system-ui,"Segoe UI Variable Text","Segoe UI",-apple-system,"Helvetica Neue",Arial,sans-serif;
+    --font-mono: "Cascadia Code","Cascadia Mono",ui-monospace,"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+
+    --radius: 3px;
+    --measure: 66ch;
+    --rule-gap: clamp(18px, 3.4vw, 44px);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #0f1319;
+      --surface:    #161c25;
+      --surface-2:  #1c242f;
+      --ink:        #e4e8ee;
+      --ink-soft:   #aab4c2;
+      --ink-faint:  #78838f;
+      --line:       #28313d;
+      --line-soft:  #1e2630;
+      --accent:     #a3b6e2;
+      --accent-ink: #b8c8ec;
+      --accent-wash:#1a2233;
+      --brass:      #d0aa63;
+      --brass-ink:  #dcbb7d;
+      --code-bg:    #131a23;
+      --code-ink:   #b9cbe8;
+    }
+  }
+  /* The viewer's toggle must win over the media query in both directions */
+  :root[data-theme="light"] {
+    --paper:#eef0f3; --surface:#fbfcfe; --surface-2:#e5e9ee; --ink:#141922;
+    --ink-soft:#4d5766; --ink-faint:#616b7a; --line:#d5dae1; --line-soft:#e3e7ec;
+    --accent:#38476b; --accent-ink:#2e3c5e; --accent-wash:#e2e7f1;
+    --brass:#92742f; --brass-ink:#7c6128; --code-bg:#e7eaef; --code-ink:#22304d;
+  }
+  :root[data-theme="dark"] {
+    --paper:#0f1319; --surface:#161c25; --surface-2:#1c242f; --ink:#e4e8ee;
+    --ink-soft:#aab4c2; --ink-faint:#78838f; --line:#28313d; --line-soft:#1e2630;
+    --accent:#a3b6e2; --accent-ink:#b8c8ec; --accent-wash:#1a2233;
+    --brass:#d0aa63; --brass-ink:#dcbb7d; --code-bg:#131a23; --code-ink:#b9cbe8;
+  }
+
+  /* ---------- Base ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 92px; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-serif);
+    font-size: 17.5px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .serif { font-family: var(--font-serif); }
+  .mono, code, pre, kbd { font-family: var(--font-mono); }
+  a { color: var(--accent-ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  a:hover { color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  /* Uppercase utility label — the page's one recurring "voice" for metadata */
+  .eyebrow, .pre-label, .note .tag, th, .fact .k, .specimen-label,
+  nav.toc .eyebrow, .pipe .step .s-n, .jcard .when, .recap .tag {
+    font-family: var(--font-ui);
+    text-transform: uppercase;
+    letter-spacing: .15em;
+    font-size: .655rem;
+    font-weight: 600;
+  }
+
+  /* ---------- Top bar ---------- */
+  header.bar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 16px;
+    padding: 13px clamp(16px, 4vw, 40px);
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar .mark {
+    font-family: var(--font-serif);
+    font-weight: 600; font-size: 1rem; letter-spacing: .005em;
+    display: flex; align-items: center; gap: 11px;
+  }
+  .bar .mark .glyph {
+    display: inline-grid; place-items: center;
+    width: 27px; height: 27px; border-radius: 2px;
+    border: 1px solid var(--accent);
+    color: var(--accent-ink); font-size: 1rem; line-height: 1;
+    background: transparent;
+  }
+  .bar .spacer { flex: 1; }
+  .toggle {
+    appearance: none; border: 1px solid var(--line); background: transparent;
+    color: var(--ink-soft); border-radius: 2px; padding: 6px 13px;
+    font-family: var(--font-ui); font-size: .76rem; letter-spacing: .04em;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+    transition: border-color .2s, color .2s;
+  }
+  .toggle:hover { border-color: var(--accent); color: var(--ink); }
+
+  /* ---------- Shell ---------- */
+  .shell {
+    max-width: 1160px; margin: 0 auto;
+    padding: 0 clamp(16px, 4vw, 40px) 100px;
+    display: grid; grid-template-columns: 232px minmax(0, 1fr);
+    gap: clamp(24px, 5vw, 58px);
+    align-items: start;
+  }
+  nav.toc {
+    position: sticky; top: 80px; align-self: start;
+    max-height: calc(100vh - 104px); overflow-y: auto;
+    padding: 26px 0; font-size: .84rem;
+  }
+  nav.toc .eyebrow { color: var(--ink-faint); margin: 0 0 12px 2px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; }
+  nav.toc li { margin: 0; }
+  nav.toc a {
+    display: grid; grid-template-columns: 26px 1fr; gap: 8px;
+    padding: 6px 8px 6px 10px; color: var(--ink-soft);
+    text-decoration: none; line-height: 1.4;
+    border-left: 2px solid transparent;
+    font-family: var(--font-ui); font-size: .81rem;
+    transition: color .18s, border-color .18s;
+  }
+  nav.toc a .n {
+    color: var(--ink-faint); font-variant-numeric: tabular-nums;
+    font-size: .72rem; padding-top: 2px; letter-spacing: .04em;
+  }
+  nav.toc a:hover { color: var(--ink); border-left-color: var(--line); }
+  nav.toc a.active {
+    color: var(--accent-ink); border-left-color: var(--accent); font-weight: 600;
+  }
+  nav.toc a.active .n { color: var(--accent-ink); }
+
+  main { min-width: 0; padding-top: 8px; }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 52px 0 40px; }
+  .hero .kicker {
+    font-family: var(--font-ui); text-transform: uppercase;
+    letter-spacing: .19em; font-size: .66rem; font-weight: 600;
+    color: var(--accent-ink); margin-bottom: 20px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-weight: 600;
+    font-size: clamp(2.05rem, 4.5vw, 3.05rem); line-height: 1.1;
+    letter-spacing: -.021em; margin: 0 0 20px;
+    text-wrap: balance; max-width: 17ch;
+  }
+  .hero .lede {
+    font-size: clamp(1.04rem, 1.9vw, 1.2rem); color: var(--ink-soft);
+    max-width: 58ch; margin: 0 0 18px; line-height: 1.62;
+  }
+  .hero .lede strong { color: var(--ink); font-weight: 600; }
+
+  /* SIGNATURE — a specimen of what the system actually returns, set as a
+     law-report extract. The product, stated as the page's thesis. */
+  .specimen {
+    margin: 30px 0 30px; padding: 0 0 0 20px;
+    border-left: 2px solid var(--accent);
+    max-width: 60ch;
+  }
+  .specimen-label { color: var(--accent-ink); margin: 0 0 12px; display: block; }
+  .specimen-q {
+    font-size: 1.02rem; color: var(--ink); margin: 0 0 12px;
+    font-style: italic;
+  }
+  .specimen-a {
+    font-size: .96rem; color: var(--ink-soft); margin: 0 0 14px; line-height: 1.6;
+  }
+  .specimen-cite {
+    font-family: var(--font-ui); font-size: .76rem; color: var(--ink-soft);
+    margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px;
+  }
+  .specimen-cite .cite-mark {
+    font-family: var(--font-serif); color: var(--accent-ink);
+    font-size: .95rem; font-weight: 600;
+  }
+  .specimen-cite .cite-law { color: var(--ink); font-weight: 600; }
+  .specimen-cite .cite-src {
+    font-family: var(--font-mono); font-size: .68rem; color: var(--ink-faint);
+  }
+
+  /* Masthead figures, set like a case caption rather than pill chips */
+  .facts {
+    display: flex; flex-wrap: wrap; gap: 0;
+    border-top: 1px solid var(--line); padding-top: 16px; margin-top: 34px;
+  }
+  .fact {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 0 clamp(16px, 2.6vw, 30px) 0 0;
+    margin-right: clamp(16px, 2.6vw, 30px);
+    border-right: 1px solid var(--line);
+  }
+  .fact:last-child { border-right: none; margin-right: 0; padding-right: 0; }
+  .fact .k { color: var(--ink-faint); }
+  .fact b {
+    font-family: var(--font-serif); font-size: 1.32rem; font-weight: 600;
+    color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.2;
+  }
+
+  /* ---------- Sections: the marginal rule ----------
+     A continuous hairline runs the height of the content column, like the
+     ruled margin of a law report, and the section marks hang in it. */
+  section.doc {
+    position: relative;
+    padding: 46px 0 46px var(--rule-gap);
+    border-left: 1px solid var(--line);
+    scroll-margin-top: 88px;
+  }
+  section.doc:last-of-type { padding-bottom: 20px; }
+  .sec-head { margin: 0 0 22px; }
+  .sec-head .num {
+    position: absolute; left: 0; transform: translateX(-50%);
+    top: 52px;
+    font-family: var(--font-serif); font-size: .82rem; font-weight: 600;
+    color: var(--accent-ink); font-variant-numeric: tabular-nums;
+    background: var(--paper);           /* interrupts the rule */
+    padding: 7px 0; line-height: 1;
+    display: block; min-width: 3.5em; text-align: center;
+    letter-spacing: .02em;
+  }
+  h2 {
+    font-family: var(--font-serif); font-weight: 600;
+    font-size: clamp(1.44rem, 2.7vw, 1.92rem); line-height: 1.18;
+    letter-spacing: -.015em; margin: 0; text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--font-serif); font-weight: 600;
+    font-size: 1.14rem; margin: 34px 0 9px; color: var(--ink);
+    letter-spacing: -.005em;
+  }
+  p, li { max-width: var(--measure); }
+  p { margin: 0 0 17px; }
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+  main ul, main ol { padding-left: 1.25em; margin: 0 0 18px; }
+  main li { margin: 8px 0; }
+  main li::marker { color: var(--accent); }
+  main li > ul, main li > ol { margin: 8px 0 0; }
+  main li > p { margin: 8px 0 0; }
+  main li > p:last-child, main li > ul:last-child, main li > ol:last-child { margin-bottom: 0; }
+  .lead-p { font-size: 1.06rem; color: var(--ink-soft); }
+
+  /* ---------- Code ---------- */
+  code {
+    background: var(--code-bg); color: var(--code-ink);
+    padding: .1em .38em; border-radius: 2px; font-size: .845em;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    border-left: 2px solid var(--line);
+    padding: 15px 18px; overflow-x: auto; margin: 0 0 20px;
+    font-size: .8rem; line-height: 1.65; border-radius: 0 2px 2px 0;
+  }
+  pre code { background: none; padding: 0; color: inherit; font-size: 1em; }
+  .pre-label { color: var(--ink-faint); margin: 0 0 7px 1px; }
+
+  /* ---------- Callouts: set as headnotes, not tinted cards ----------
+     No fill, no rounding — a hairline above and a small-caps label, the way a
+     law report marks a headnote. Keeps the page quiet. */
+  .note {
+    border-top: 1px solid var(--accent);
+    padding: 14px 0 2px; margin: 0 0 24px; max-width: var(--measure);
+    background: none;
+  }
+  .note .tag { display: block; margin-bottom: 7px; color: var(--accent-ink); }
+  .note p { margin: 0; color: var(--ink-soft); }
+  .note p + p { margin-top: 11px; }
+  .note strong { color: var(--ink); }
+  .note.warn { border-top-color: var(--brass); }
+  .note.warn .tag { color: var(--brass-ink); }
+
+  /* ---------- Tables ---------- */
+  .table-wrap {
+    overflow-x: auto; margin: 0 0 24px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+  th, td {
+    text-align: left; padding: 11px 16px 11px 0; vertical-align: top;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  th { color: var(--ink-faint); padding-top: 13px; padding-bottom: 9px; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  td:first-child { font-weight: 600; }
+  td:last-child, th:last-child { padding-right: 4px; }
+
+  /* ---------- Pipeline: a real sequence, so numbering earns its place ---- */
+  .pipe {
+    display: grid; gap: 1px; margin: 8px 0 26px;
+    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+    background: var(--line); border: 1px solid var(--line);
+  }
+  .pipe .step { background: var(--paper); padding: 15px 16px; }
+  .pipe .step .s-n {
+    color: var(--accent-ink); margin-bottom: 7px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .pipe .step b { display: block; font-size: .96rem; margin-bottom: 4px; }
+  .pipe .step span.d { font-size: .82rem; color: var(--ink-faint); line-height: 1.5; }
+  .pipe .step .file {
+    font-family: var(--font-mono); font-size: .7rem;
+    color: var(--accent-ink); margin-top: 9px; display: block;
+  }
+
+  /* ---------- The two journeys ---------- */
+  .two-cards { display: grid; gap: 1px; grid-template-columns: 1fr 1fr; margin: 6px 0 26px;
+    background: var(--line); border: 1px solid var(--line); }
+  .jcard { background: var(--paper); padding: 20px 22px; }
+  .jcard h4 { margin: 0 0 5px; font-family: var(--font-serif); font-size: 1.12rem; font-weight: 600; }
+  .jcard .when { color: var(--brass-ink); margin-bottom: 13px; display: block; }
+  .jcard p { font-size: .9rem; margin-bottom: 13px; color: var(--ink-soft); }
+  .jcard pre { margin-bottom: 13px; font-size: .74rem; }
+  .jcard .cmd {
+    font-family: var(--font-mono); font-size: .78rem;
+    color: var(--accent-ink); border-bottom: 1px solid var(--accent-wash);
+    padding-bottom: 2px; display: inline-block;
+  }
+
+  /* ---------- Closing statement — the one filled block on the page ------- */
+  .recap {
+    background: var(--accent); color: #f4f6fa; border-radius: 2px;
+    padding: 28px 30px; margin: 10px 0 0;
+  }
+  :root[data-theme="dark"] .recap { color: #0f1319; }
+  @media (prefers-color-scheme: dark) { .recap { color: #0f1319; } }
+  :root[data-theme="light"] .recap { color: #f4f6fa; }
+  .recap .tag { display: block; opacity: .72; margin-bottom: 11px; }
+  .recap p { max-width: none; margin: 0; font-size: 1.03rem; line-height: 1.62; }
+
+  footer {
+    max-width: 1160px; margin: 0 auto;
+    padding: 30px clamp(16px,4vw,40px) 64px;
+    color: var(--ink-faint); font-size: .8rem; font-family: var(--font-ui);
+    border-top: 1px solid var(--line);
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc {
+      position: static; max-height: none; order: -1;
+      border: 1px solid var(--line); padding: 16px 18px; margin-top: 20px;
+    }
+    nav.toc details summary { cursor: pointer; font-weight: 600; color: var(--ink); font-family: var(--font-ui); font-size: .85rem; }
+    .two-cards { grid-template-columns: 1fr; }
+    /* The marginal rule needs room it no longer has: bring the mark inline. */
+    section.doc { padding-left: 0; border-left: none; border-top: 1px solid var(--line); }
+    .sec-head .num {
+      position: static; transform: none; background: none;
+      padding: 0 0 6px; width: auto; text-align: left;
+    }
+  }
+  @media (min-width: 901px) { nav.toc details > summary { display: none; } }
+</style>
+
+<header class="bar">
+  <span class="mark"><span class="glyph serif">§</span> RAG&nbsp;Field&nbsp;Guide</span>
+  <span class="spacer"></span>
+  <button class="toggle" id="themeToggle" aria-label="Toggle color theme">
+    <span id="themeIcon">◐</span> <span id="themeLabel">Theme</span>
+  </button>
+</header>
+
+<div class="shell">
+  <nav class="toc" aria-label="Table of contents">
+    <details open>
+      <summary>Contents</summary>
+      <div class="toc-body">
+        <p class="eyebrow" style="margin-top:14px">The Guide</p>
+        <ol id="tocList">
+          <li><a href="#s1"><span class="n">01</span><span>The 60-second summary</span></a></li>
+          <li><a href="#s2"><span class="n">02</span><span>What problem are we solving?</span></a></li>
+          <li><a href="#s3"><span class="n">03</span><span>What is RAG?</span></a></li>
+          <li><a href="#s4"><span class="n">04</span><span>The mental model</span></a></li>
+          <li><a href="#s5"><span class="n">05</span><span>Vocabulary you need</span></a></li>
+          <li><a href="#s6"><span class="n">06</span><span>The two journeys</span></a></li>
+          <li><a href="#s7"><span class="n">07</span><span>Journey A — Indexing</span></a></li>
+          <li><a href="#s8"><span class="n">08</span><span>Journey B — Answering</span></a></li>
+          <li><a href="#s9"><span class="n">09</span><span>Tour of every file</span></a></li>
+          <li><a href="#s10"><span class="n">10</span><span>Why each technology</span></a></li>
+          <li><a href="#s11"><span class="n">11</span><span>How to use it</span></a></li>
+          <li><a href="#s12"><span class="n">12</span><span>Every config knob</span></a></li>
+          <li><a href="#s12b"><span class="n">12b</span><span>Why it's slow</span></a></li>
+          <li><a href="#s13"><span class="n">13</span><span>The corpus</span></a></li>
+          <li><a href="#s14"><span class="n">14</span><span>Troubleshooting &amp; FAQ</span></a></li>
+          <li><a href="#s15"><span class="n">15</span><span>How to extend it</span></a></li>
+        </ol>
+      </div>
+    </details>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <div class="kicker">Retrieval-augmented generation, explained from zero</div>
+      <h1 class="serif">A field guide to a legal-research RAG system</h1>
+      <p class="lede">A working system that answers questions about Philippine medical law by reading <strong>real statutes, regulations and Supreme Court decisions</strong> — not an AI's fuzzy memory. This guide assumes <strong>no prior knowledge</strong> and explains every moving part, why it exists, and how a question becomes a cited answer.</p>
+      <p class="lede" style="font-size:1rem">Most RAG walkthroughs stop at "it works." This one also documents the failures — the retrieval bugs, the measurements that caught them, and the approaches tried and abandoned. Those are the parts hardest to find elsewhere.</p>
+      <figure class="specimen">
+        <figcaption class="specimen-label">Specimen — what the system returns</figcaption>
+        <p class="specimen-q">"What are the grounds for revoking a physician's certificate of registration?"</p>
+        <p class="specimen-a">Grounds for reprimanding a physician, or for suspending or revoking a certificate of registration, include conviction of an offence involving moral turpitude, immoral or dishonorable conduct, and gross negligence resulting in injury to or death of the patient …</p>
+        <p class="specimen-cite">
+          <span class="cite-mark">§</span>
+          <span class="cite-law">Republic Act No. 2382, Sec. 24</span>
+          <span class="cite-src">medical-act-of-1959-ra-2382.txt</span>
+        </p>
+      </figure>
+      <div class="facts">
+        <span class="fact"><span class="k">Chunks indexed</span><b>7,935</b></span>
+        <span class="fact"><span class="k">Source documents</span><b>154</b></span>
+        <span class="fact"><span class="k">Source families</span><b>5</b></span>
+        <span class="fact"><span class="k">Inference</span><b>On-device</b></span>
+      </div>
+    </div>
+
+    <!-- 1 -->
+    <section class="doc" id="s1">
+      <div class="sec-head"><span class="num serif">§&nbsp;01</span><h2 class="serif">The 60-second summary</h2></div>
+      <p class="lead-p">This is a program that <strong>answers questions about Philippine medical law</strong> by reading a curated collection of real legal documents — instead of relying on an AI's memory, which can be wrong or outdated.</p>
+      <p>It works in two phases:</p>
+      <ul>
+        <li><strong>Indexing</strong> (done once, repeated when documents change): read every document, chop it into passages, and store them in a searchable database.</li>
+        <li><strong>Answering</strong> (every time someone asks something): find the handful of passages most relevant to the question, hand them to a local AI model, and have it write an answer that <strong>cites the specific law and section</strong> it used.</li>
+      </ul>
+      <p>Everything runs <strong>on one machine</strong> — no cloud, no API keys, no per-question cost, and the documents never leave the computer they are indexed on.</p>
+      <div class="note warn">
+        <span class="tag">⚖️ Not legal advice</span>
+        <p>This is a research tool for retrieving and citing legal texts. It does not interpret the law, does not account for the facts of any particular case, and does not replace a licensed Philippine attorney. Every answer ships with its sources precisely so a human can check them — <strong>verify against the cited text before relying on anything</strong>.</p>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="doc" id="s2">
+      <div class="sec-head"><span class="num serif">§&nbsp;02</span><h2 class="serif">What problem are we even solving?</h2></div>
+      <p>Imagine you ask a general AI chatbot: <em>"What are the grounds for revoking a physician's license in the Philippines?"</em> A plain chatbot has three problems:</p>
+      <ol>
+        <li><strong>It might make things up.</strong> Language models produce <em>plausible-sounding</em> text. When they don't know, they often invent a confident-sounding answer — called a <strong>hallucination</strong>. For legal work, a made-up "Section 24" is worse than useless.</li>
+        <li><strong>Its knowledge is frozen and generic.</strong> It learned from the public internet up to some cutoff date. It may not know a 2025 PRC resolution, and it can't read <em>your</em> specific PDFs.</li>
+        <li><strong>You can't verify it.</strong> It won't tell you <em>where</em> an answer came from, so you can't check it against the actual statute.</li>
+      </ol>
+      <p>What you actually want is an assistant that answers <strong>only from a trusted set of documents you provide</strong>, and <strong>shows its sources</strong>. That is exactly what RAG gives you.</p>
+    </section>
+
+    <!-- 3 -->
+    <section class="doc" id="s3">
+      <div class="sec-head"><span class="num serif">§&nbsp;03</span><h2 class="serif">What is RAG? The core idea</h2></div>
+      <p><strong>RAG</strong> stands for <strong>Retrieval-Augmented Generation</strong>. Break it apart:</p>
+      <ul>
+        <li><strong>Generation</strong> = an AI model writing an answer in natural language.</li>
+        <li><strong>Retrieval</strong> = looking up relevant information from a collection of documents.</li>
+        <li><strong>Augmented</strong> = we <em>feed the retrieved information into</em> the AI before it writes, so its answer is grounded in real source material.</li>
+      </ul>
+      <div class="note">
+        <span class="tag">The one-line definition</span>
+        <p><strong>RAG = "look up the relevant documents first, then have the AI answer using only those documents."</strong></p>
+      </div>
+      <p>The AI is no longer answering from memory — it's answering from an <strong>open book</strong> chosen by whoever curated the corpus. This is why RAG answers can cite sources and rarely hallucinate: the facts sit right in front of the model.</p>
+      <div class="note">
+        <span class="tag">The key insight</span>
+        <p>The AI in a RAG system does <strong>reading comprehension</strong>, not <strong>recall</strong>. Its job is "read these passages and answer," not "remember Philippine law." That's a much easier, safer job — and it's why a modest local model can do legal Q&amp;A well.</p>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="doc" id="s4">
+      <div class="sec-head"><span class="num serif">§&nbsp;04</span><h2 class="serif">The mental model: a librarian with a research assistant</h2></div>
+      <p>Picture a law library with two staff members:</p>
+      <ul>
+        <li><strong>The Librarian (Retrieval).</strong> You ask a question. They don't answer it — they sprint into the stacks and return with the 6 most relevant pages, sticky-noted. Brilliant at <em>finding</em>, but they don't interpret.</li>
+        <li><strong>The Research Assistant (Generation / the LLM).</strong> They read those 6 pages and write a clear answer — quoting the law and section — and refuse to go beyond what's on the pages.</li>
+      </ul>
+      <p>The whole system is an automated version of this pair, plus a <strong>cataloguing step</strong> done ahead of time so the librarian can find things fast. Keep this picture in mind — every component maps onto it.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Real-world role</th><th>In the system</th></tr></thead>
+          <tbody>
+            <tr><td>Cataloguing the library ahead of time</td><td>Ingestion — <code>ragmed/ingest.py</code></td></tr>
+            <tr><td>The card catalog / search index</td><td><code>vectorstore.py</code>, <code>retriever.py</code></td></tr>
+            <tr><td>The librarian who fetches pages</td><td>Retriever — <code>ragmed/retriever.py</code></td></tr>
+            <tr><td>The assistant who writes the answer</td><td>LLM via Ollama — <code>llm.py</code>, <code>rag.py</code></td></tr>
+            <tr><td>The front desk where questions arrive</td><td>CLI / Web UI — <code>cli.py</code>, <code>app.py</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="doc" id="s5">
+      <div class="sec-head"><span class="num serif">§&nbsp;05</span><h2 class="serif">The vocabulary you need</h2></div>
+      <p>Don't memorize — skim now, refer back later.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>Plain-English meaning</th></tr></thead>
+          <tbody>
+            <tr><td>Corpus</td><td>The whole collection of documents the system knows about. Here it lives in <code>corpus/</code>.</td></tr>
+            <tr><td>Document</td><td>One source file — a PDF of a statute, a DOH order, etc.</td></tr>
+            <tr><td>Chunk</td><td>A small slice of a document (a few paragraphs). We search and retrieve <em>chunks</em>, not whole laws — they're too big to feed the AI and too coarse to pinpoint an answer.</td></tr>
+            <tr><td>Embedding</td><td>A list of numbers (a <em>vector</em>) representing the <em>meaning</em> of text. Similar meanings → similar numbers. This lets a computer find text by meaning, not just keywords.</td></tr>
+            <tr><td>Vector</td><td>An array of numbers, e.g. <code>[0.02, -0.51, …]</code>. Yours have 768 numbers each.</td></tr>
+            <tr><td>Vector store</td><td>A database built to store embeddings and instantly find the most similar ones. Yours is <strong>Chroma</strong>.</td></tr>
+            <tr><td>Semantic (dense) search</td><td>Searching by <em>meaning</em> using embeddings. "Revoke a doctor's license" can match "suspension of a certificate of registration" with no shared keywords.</td></tr>
+            <tr><td>Lexical (BM25) search</td><td>Old-school exact-word search. Great for "RA 2382" or "Section 24" where the exact token matters.</td></tr>
+            <tr><td>Hybrid search</td><td>Combining semantic + lexical for the best of both. Yours does this.</td></tr>
+            <tr><td>HyDE</td><td><em>Hypothetical Document Embeddings.</em> When your question is worded nothing like the law, the system has the LLM draft a short <em>imaginary</em> answer in legal vocabulary and searches with that too. You never see the draft — it exists only to supply the terminology your question lacked.</td></tr>
+            <tr><td>Top-K</td><td>How many chunks are handed to the LLM (yours: 6). Every slot spent on a duplicate, or on a fourth passage from the same case, is a slot the answer doesn't get.</td></tr>
+            <tr><td>Bi-encoder vs cross-encoder</td><td>The two ways to compare a question with a chunk. A <strong>bi-encoder</strong> vectorises each <em>separately</em> and compares vectors — fast enough to search everything, but the chunk's vector never saw your question. A <strong>cross-encoder</strong> reads the pair <em>together</em> and scores them directly — far more accurate, far too slow for a whole corpus. Yours uses the first to find ~30 candidates and the second to order them: the <strong>retrieve-then-rerank</strong> pattern.</td></tr>
+            <tr><td>LLM</td><td>The AI that writes the final answer. Yours is <code>qwen2.5:7b-instruct</code>, run locally by Ollama.</td></tr>
+            <tr><td>Ollama</td><td>A free program that runs LLMs on your own computer.</td></tr>
+            <tr><td>Prompt</td><td>The full text sent to the LLM: your question + retrieved passages + instructions.</td></tr>
+            <tr><td>Grounding</td><td>Forcing the AI to answer strictly from provided sources.</td></tr>
+            <tr><td>Hallucination</td><td>When an AI confidently invents false information. RAG + grounding is the defense.</td></tr>
+            <tr><td>OCR</td><td>Turning a <em>scanned image</em> of text into actual searchable text.</td></tr>
+            <tr><td>Ingestion / indexing</td><td>The one-time process of reading documents into the searchable store.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="doc" id="s6">
+      <div class="sec-head"><span class="num serif">§&nbsp;06</span><h2 class="serif">The two journeys: Indexing vs. Answering</h2></div>
+      <p>This is the single most important thing to internalize. A RAG system has <strong>two completely separate flows</strong>, and confusing them is the #1 beginner stumbling block.</p>
+      <div class="two-cards">
+        <div class="jcard">
+          <h4 class="serif">Journey A — Indexing</h4>
+          <div class="when">Happens rarely</div>
+          <p>Run this when you add or change documents. It reads everything and fills the database. It does <strong>not</strong> answer questions. Think: <em>stocking the library.</em></p>
+          <pre><code>documents → read text → cut into
+chunks → embed each chunk →
+store in Chroma</code></pre>
+          <span class="cmd">python cli.py ingest</span>
+        </div>
+        <div class="jcard">
+          <h4 class="serif">Journey B — Answering</h4>
+          <div class="when">Happens every question</div>
+          <p>Uses the database Journey A already built. It never re-reads your PDFs from scratch. Think: <em>using the library.</em></p>
+          <pre><code>question → find relevant chunks
+(hybrid search) → build prompt →
+LLM writes cited answer → show sources</code></pre>
+          <span class="cmd">python cli.py ask "…"</span>
+        </div>
+      </div>
+      <div class="note">
+        <span class="tag">Why separate them?</span>
+        <p>Reading and embedding documents is slow and only needs to happen when documents change. Answering must be fast and on demand. Splitting the work means every question reuses the expensive indexing done once. The index described here holds <strong>7,935 chunks from 154 documents</strong>.</p>
+      </div>
+    </section>
+
+    <!-- 7 -->
+    <section class="doc" id="s7">
+      <div class="sec-head"><span class="num serif">§&nbsp;07</span><h2 class="serif">Journey A — Building the index, step by step</h2></div>
+      <p>When you run <code>python cli.py ingest</code>, here's the assembly line. Each stop is a real file in <code>ragmed/</code>.</p>
+      <div class="pipe">
+        <div class="step"><div class="s-n">Step 1</div><b>Find the files</b><span class="d">Scan <code>corpus/</code> for PDF, DOCX, TXT, MD, HTML.</span><span class="file">loaders.py</span></div>
+        <div class="step"><div class="s-n">Step 2</div><b>Extract text</b><span class="d">Each type gets the right reader; scanned PDFs fall back to OCR automatically.</span><span class="file">loaders.py · ocr.py</span></div>
+        <div class="step"><div class="s-n">Step 3</div><b>Cut into chunks</b><span class="d">Split on Section/Article/Rule; tag each with its law + section.</span><span class="file">chunking.py</span></div>
+        <div class="step"><div class="s-n">Step 4</div><b>Embed each chunk</b><span class="d">bge model turns text into a 768-number meaning-vector.</span><span class="file">embeddings.py</span></div>
+        <div class="step"><div class="s-n">Step 5</div><b>Store everything</b><span class="d">Chunks + vectors + metadata saved to Chroma; BM25 keyword index built too.</span><span class="file">vectorstore.py</span></div>
+      </div>
+      <h3>Step 2 — the OCR twist</h3>
+      <p>If a PDF is a <em>scanned image</em> (just a picture of a page), the normal readers come back nearly empty. Then <strong>OCR kicks in automatically</strong>: each page is rendered to an image and Tesseract "reads" the text off it. This is how the scanned PRC disciplinary-rules PDFs made it into the corpus at all.</p>
+      <h3>Step 3 — why "legal-aware" chunking matters</h3>
+      <p>We don't cut naively every N characters — that would split "Section 24" from its own text. Instead the chunker detects <code>SECTION</code>/<code>ARTICLE</code>/<code>RULE</code> boundaries, recognizes the document's identity (e.g. "Republic Act No. 2382"), and tags every chunk with its <strong>law</strong> and <strong>section</strong>. That metadata is what lets an answer say <em>"(Republic Act No. 2382, Sec. 24)"</em>. Chunks target ~1,100 characters with 150 characters of overlap so an answer never falls in the crack between two chunks.</p>
+      <div class="note">
+        <span class="tag">After indexing</span>
+        <p>The <code>corpus/</code> PDFs aren't needed to answer questions anymore — everything lives in <code>data/</code>.</p>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="doc" id="s8">
+      <div class="sec-head"><span class="num serif">§&nbsp;08</span><h2 class="serif">Journey B — Answering a question, step by step</h2></div>
+      <p>When you run <code>python cli.py ask "…"</code>, here's what happens.</p>
+      <ol>
+        <li><strong>Understand the question as a vector.</strong> Your question is embedded with the <em>same</em> bge model, so it lives in the same "meaning space" as the chunks.</li>
+        <li><strong>Retrieve two ways.</strong> The librarian runs a <strong>dense</strong> (semantic) search in Chroma <em>and</em> a <strong>lexical</strong> (BM25 keyword) search — ~25 candidates each.</li>
+        <li><strong>Fuse the lists.</strong> Each candidate gets a combined score:
+          <pre style="margin-top:10px"><code>final_score = 0.6 × (semantic score)
+            + 0.4 × (keyword score)</code></pre>
+          Both score sets are normalized to 0–1 first. This <strong>hybrid</strong> approach handles fuzzy conceptual questions <em>and</em> precise citation lookups.</li>
+        <li><strong>Clean the ranking before cutting it.</strong> A raw ranking isn't safe to hand over yet. Two filters run, both added after real failures:
+          <ul>
+            <li><strong>Drop exact duplicates.</strong> Legal corpora hold the same passage twice by design — a resolution on reconsideration reprints the decision it modifies. Identical text scores identically, so copies sit adjacent and eat slots in pairs. One case once took <strong>6 of 10 slots as three duplicate pairs</strong>.</li>
+            <li><strong>Cap any one document</strong> (<code>MAX_CHUNKS_PER_SOURCE</code>, default 3). The subtler cousin: not duplicate text, but one landmark case genuinely discussing its doctrine across a dozen passages and out-scoring everything on all of them. Before the cap, <em>"what is informed consent"</em> filled <strong>8 of 10 slots with a single case</strong> — 3 distinct documents in the whole context. Across ten test questions the top document's share averaged <strong>47%</strong>; capped, it's <strong>28%</strong>.</li>
+          </ul>
+          The cap <em>demotes</em> rather than deletes — once every document has had its three, held-back chunks return to fill remaining slots. A question only one statute answers still gets a full context.</li>
+        <li><strong>Ask the right question of each chunk — the reranker.</strong> Everything so far compares <em>two vectors</em>: one for your question, one computed for each chunk long before your question existed. That speed is what makes searching 7,900 chunks possible, and it is also the ceiling — a chunk's vector never saw your question, so "is about similar things" and "actually answers this" score alike. Measured here, one question scored <strong>eight different chunks inside a 1.4% spread</strong>, with the rule that answered it sitting 5th.
+          <p style="margin-top:8px">A <strong>cross-encoder</strong> reads your question and one chunk <em>together</em> and scores whether the passage answers it. Far too slow for a whole corpus — which is why it runs over the ~30 candidates retrieval already narrowed to. On those chunks tied within 1.4%, it separated the right one by <strong>0.1975</strong>.</p>
+          <p style="margin-top:8px">Two safeguards, both from things going wrong: it <strong>fails open</strong> (model won't load → previous ordering stands), and it <strong>ignores itself when it has nothing to say</strong> — asked a two-part question the cross-encoder returned every candidate within <strong>0.0004</strong> of 0.5000, and sorting that noise promoted an unrelated case to rank 1. Reranking runs <em>before</em> the cap, or the cap would already have chosen which chunks survive using the very scores the reranker exists to correct.</p></li>
+        <li><strong>Guarantee every part of a compound question is heard.</strong> Scores are normalized <em>against the whole question</em>, so chunks answering the neglected half rank below chunks matching the dominant half however many candidates you fetch. Measured: the top twelve results all scored ≥0.894 and were <em>all</em> one half of the question.
+          <p style="margin-top:8px">The tempting fix fails — raising <code>CANDIDATE_K</code> surfaced the missing half at 60 and <strong>lost it again at 120</strong>, because a bigger pool moves the normalization window. A number that works at one value and fails at double is fitted to one question, not a fix. So each <strong>ask</strong> gets its own search and is guaranteed <code>MIN_CHUNKS_PER_CLAUSE</code> slots — a <em>floor, not a quota</em>. Only then are the top 6 kept.</p></li>
+        <li><strong>If the question doesn't speak the corpus's language — HyDE.</strong> A lay narrative (<em>"they kept changing their story about my mother"</em>) embeds nowhere near terse statutory text and gives BM25 no distinctive words. Retrieval returns noise and the system refuses — which <em>looks</em> like honesty and is actually a bug. So the LLM drafts a short <em>imaginary</em> answer in legal vocabulary and the system searches with that too. You never see the draft; its only job is supplying the terminology your question lacked. It's forbidden from inventing section numbers — a fabricated "Article 2200" is a real token BM25 matches hard, aiming retrieval confidently at the wrong law.
+          <p>It fires on two triggers: when the <em>whole question</em> matches poorly, and when any single <em>ask</em> does. The second exists because the first structurally cannot see a compound question — similarity over a whole question is a <strong>maximum</strong>, so one well-matched half hides the other. <em>"Can we refuse to release the body… who can we collect from, and is there a deadline?"</em> scored a healthy 0.736 on its first half alone; HyDE stayed off, the estate-claim half was never retrieved, and the answer <strong>flatly denied a deadline the Rules of Court impose</strong>. Note the failure mode: not a refusal — a fluent wrong answer.</p></li>
+        <li><strong>Remember the conversation.</strong> Haven holds the session so follow-ups work — which is two problems, not one. <strong>Retrieval breaks first:</strong> "And is there a deadline?" carries none of the words that say what it is about, so searched as written it finds noise, and by the time history reaches the prompt retrieval has already failed. A dependent follow-up is therefore <em>rewritten into a standalone question before searching</em> — resolving references only, never adding terminology or facts you did not say.
+          <p style="margin-top:8px">And one risk larger here than in an ordinary chatbot: once Haven's earlier answers sit in the prompt they become a second apparent source, and it will cite a provision it "remembers stating" with no retrieved passage behind it — a citation a reader cannot tell from a real one. Three defences: the block is labelled <em>"for reference only — not a source, never cite it"</em>; a system-prompt rule forbids citing it or carrying a citation between turns; and the retrieved passages sit <strong>nearer the question</strong> than the history, the position the model weighs most. History is bounded, and every step fails open.</p></li>
+        <li><strong>Build the prompt.</strong> Three parts: a <strong>system prompt</strong> (the rulebook — answer only from context, cite law &amp; section, admit when the corpus is silent), the <strong>context</strong> (the 6 chunks, each labeled with law/section/source), and <strong>your question</strong>.</li>
+        <li><strong>The LLM writes the answer.</strong> Ollama runs <code>qwen2.5:7b-instruct</code> locally and streams a grounded, cited answer. Temperature is low (0.1) to stay factual.</li>
+        <li><strong>Show answer + sources.</strong> You get the answer plus the list of source chunks (law, section, filename, relevance score) so you can verify every point.</li>
+      </ol>
+      <div class="note">
+        <span class="tag">The honesty guarantee</span>
+        <p>Because the model is told to answer only from the retrieved text and to admit when the corpus is silent, you get "I don't have that" instead of a confident fabrication. That's the whole point of RAG for legal work.</p>
+      </div>
+    </section>
+
+    <!-- 9 -->
+    <section class="doc" id="s9">
+      <div class="sec-head"><span class="num serif">§&nbsp;09</span><h2 class="serif">A tour of every file</h2></div>
+      <p>Think of <code>ragmed/</code> as the <em>engine</em>, and <code>cli.py</code> / <code>app.py</code> as the <em>steering wheels</em>.</p>
+      <h3>The engine — <code>ragmed/</code></h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>File</th><th>Plain-English job</th></tr></thead>
+          <tbody>
+            <tr><td><code>config.py</code></td><td>The single control panel — every setting lives here, overridable via <code>.env</code>. Start here to change behavior.</td></tr>
+            <tr><td><code>loaders.py</code></td><td>Turns any supported file into clean text. Calls OCR when a PDF is scanned.</td></tr>
+            <tr><td><code>ocr.py</code></td><td>Reads text off scanned PDFs by rendering pages to images and running Tesseract.</td></tr>
+            <tr><td><code>chunking.py</code></td><td>Cuts documents along legal boundaries and tags each chunk with law + section.</td></tr>
+            <tr><td><code>embeddings.py</code></td><td>Converts text ↔ meaning-vectors using the local bge model.</td></tr>
+            <tr><td><code>vectorstore.py</code></td><td>Talks to Chroma: create, add, search, count.</td></tr>
+            <tr><td><code>retriever.py</code></td><td>The hybrid search brain: dense + BM25, then fuse, rerank, cap, reserve per-ask slots, and rank.</td></tr>
+            <tr><td><code>rerank.py</code></td><td>The cross-encoder that re-scores candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands.</td></tr>
+            <tr><td><code>conversation.py</code></td><td>Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they cannot be cited as a source.</td></tr>
+            <tr><td><code>llm.py</code></td><td>Talks to Ollama; checks it's running and the model is available.</td></tr>
+            <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → get the answer. Holds the system prompt.</td></tr>
+            <tr><td><code>ingest.py</code></td><td>The indexing pipeline that runs Journey A over the whole corpus.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>The steering wheels &amp; tools</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>File / folder</th><th>Job</th></tr></thead>
+          <tbody>
+            <tr><td><code>cli.py</code></td><td>Command line: <code>ingest</code>, <code>ask</code>, <code>chat</code>, <code>status</code>. Your main tool.</td></tr>
+            <tr><td><code>app.py</code></td><td>A Streamlit web chat UI — same engine, friendlier face, with expandable citations.</td></tr>
+            <tr><td><code>fetch/fetch_seeds.py</code></td><td>Downloads documents from a seed list into <code>corpus/_fetched/</code>; robust against flaky gov sites.</td></tr>
+            <tr><td><code>fetch/seeds*.txt</code></td><td>Curated source lists: statutes (LawPhil), PRC and DOH issuances, jurisprudence, and the bills/payment/non-payment bundles.</td></tr>
+            <tr><td><code>fetch/split_rules_of_court.py</code></td><td><strong>Run after fetching the Rules of Court.</strong> LawPhil serves Rules 72–109 as one 148k-character page; this splits it into one file per rule so each is citable. See §13.</td></tr>
+            <tr><td><code>tests/</code></td><td>164 checks, each encoding a bug that shipped once — duplicate crowding, the per-source cap, per-ask slot reservation, the reranker's fail-open and flat-score guards, the HyDE clause gate, citation labelling, the fetcher's retry budget, conversation grounding.</td></tr>
+            <tr><td><code>corpus/</code></td><td>Your source documents — the input.</td></tr>
+            <tr><td><code>data/</code></td><td>The Chroma vector DB + BM25 cache. Auto-generated.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note warn">
+        <span class="tag">Precious vs. regenerable</span>
+        <p><code>corpus/</code> (your documents) and the code are <strong>precious</strong>. <code>data/</code>, <code>.venv/</code>, and <code>corpus/_fetched/</code> are <strong>regenerable</strong> — delete them and rebuild with <code>pip install</code> + <code>fetch</code> + <code>ingest</code>. That's why they're git-ignored.</p>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="doc" id="s10">
+      <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why we chose each technology</h2></div>
+      <h3>Why "fully local / offline"?</h3>
+      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: two installs (Ollama, Tesseract), and answers run on CPU rather than a datacentre GPU. For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
+      <h3>Why Ollama + qwen2.5:7b-instruct?</h3>
+      <p>Ollama is the simplest way to run an LLM locally. <code>qwen2.5:7b-instruct</code> is a 7-billion-parameter model that's strong at following instructions and citing sources, and runs comfortably on a machine with ~16 GB of RAM to spare. Swap it via one setting.</p>
+      <h3>Why bge-base for embeddings?</h3>
+      <p><code>BAAI/bge-base-en-v1.5</code> is a well-regarded open embedding model with a great quality-to-speed balance on CPU. Drop to <code>bge-small</code> (faster) or <code>bge-large</code> (more accurate) via <code>EMBED_MODEL</code>.</p>
+      <h3>Why Chroma?</h3>
+      <p>A local, persistent, zero-config vector database — it just writes to <code>data/chroma/</code>. No separate server. Perfect for a single-machine project.</p>
+      <h3>Why <em>hybrid</em> retrieval?</h3>
+      <p>Legal questions are special: exact tokens matter enormously. "RA 2382", "Section 24", "PRC" must match precisely — and pure semantic search can miss exact identifiers, while pure keyword search misses paraphrases. Combining both covers both needs. A genuinely important choice for a <em>legal</em> RAG.</p>
+      <h3>Why legal-aware chunking &amp; OCR?</h3>
+      <p>A citation is only useful if it points to the right Section — so we split on structure and tag law + section. And many official PRC/DOH documents are <em>scanned images</em>; OCR makes them searchable, including the disciplinary-procedure rules most relevant to "PRC complaints."</p>
+    </section>
+
+    <!-- 11 -->
+    <section class="doc" id="s11">
+      <div class="sec-head"><span class="num serif">§&nbsp;11</span><h2 class="serif">How to actually use it</h2></div>
+      <p>Run everything from the project folder using the venv's Python: <code>.\.venv\Scripts\python.exe</code>.</p>
+      <p class="pre-label">One-time setup (mostly done)</p>
+      <pre><code># Python libraries (already installed in .venv)
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Install Ollama (STILL TO DO — needed for answers)
+# Download from https://ollama.com/download, then:
+ollama pull qwen2.5:7b-instruct
+
+# Tesseract for OCR (already installed via winget)</code></pre>
+      <p class="pre-label">Everyday commands</p>
+      <pre><code># Health check: index size, Ollama up?, OCR ready?
+.\.venv\Scripts\python.exe cli.py status
+
+# Build / refresh the index after adding documents
+.\.venv\Scripts\python.exe cli.py ingest          # add & update
+.\.venv\Scripts\python.exe cli.py ingest --reset  # wipe & rebuild
+
+# Ask one question
+.\.venv\Scripts\python.exe cli.py ask "What are the grounds for revoking a physician's certificate?"
+
+# Conversation mode
+.\.venv\Scripts\python.exe cli.py chat
+
+# Web chat interface (opens in browser)
+.\.venv\Scripts\python.exe -m streamlit run app.py</code></pre>
+      <div class="note warn">
+        <span class="tag">Golden rule</span>
+        <p>Whenever you add, remove, or change documents in <code>corpus/</code>, run <code>ingest</code> again. The index doesn't update itself.</p>
+      </div>
+    </section>
+
+    <!-- 12 -->
+    <section class="doc" id="s12">
+      <div class="sec-head"><span class="num serif">§&nbsp;12</span><h2 class="serif">Every configuration knob, explained</h2></div>
+      <p>All live in <code>ragmed/config.py</code> with sensible defaults. To change one without editing code, copy <code>.env.example</code> to <code>.env</code> and set it there.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Setting</th><th>What it does</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td><code>EMBED_MODEL</code></td><td>Which embedding model. <em>Changing needs a full <code>ingest --reset</code>.</em></td><td>bge-base-en-v1.5</td></tr>
+            <tr><td><code>LLM_MODEL</code></td><td>Which Ollama model writes answers.</td><td>qwen2.5:7b-instruct</td></tr>
+            <tr><td><code>LLM_TEMPERATURE</code></td><td>Creativity dial (0 = strict/factual).</td><td>0.1</td></tr>
+            <tr><td><code>LLM_NUM_CTX</code></td><td>How much text the model considers at once (tokens).</td><td>8192</td></tr>
+            <tr><td><code>CHUNK_SIZE</code></td><td>Target characters per chunk. <em>Re-ingest after changing.</em></td><td>1100</td></tr>
+            <tr><td><code>CHUNK_OVERLAP</code></td><td>Characters shared between neighbors.</td><td>150</td></tr>
+            <tr><td><code>TOP_K</code></td><td>How many chunks are fed to the LLM. More = more context, slower.</td><td>6</td></tr>
+            <tr><td><code>CANDIDATE_K</code></td><td>Candidates each search fetches before fusion.</td><td>25</td></tr>
+            <tr><td><code>DENSE_WEIGHT</code> / <code>LEXICAL_WEIGHT</code></td><td>Balance of semantic vs. keyword search. Raise lexical for exact citations.</td><td>0.6 / 0.4</td></tr>
+            <tr><td><code>MAX_CHUNKS_PER_SOURCE</code></td><td>Most chunks one document may take in the top-K, so a landmark case can't fill the context with itself. <code>0</code> disables. Overflow is demoted, not dropped.</td><td>3</td></tr>
+            <tr><td><code>CLAUSE_CANDIDATE_K</code> / <code>MIN_CHUNKS_PER_CLAUSE</code></td><td>Per-ask search size, and the slots each ask of a compound question is guaranteed. A floor, not a quota.</td><td>10 / 2</td></tr>
+            <tr><td><code>RERANK_ENABLED</code> / <code>RERANK_MODEL</code></td><td>The cross-encoder that rescores retrieved candidates. Set false to trade ranking quality for ~4s per query; <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> is ~10× smaller.</td><td>true / bge-reranker-base</td></tr>
+            <tr><td><code>RERANK_CANDIDATES</code></td><td>How many retrieved chunks get rescored; the tail keeps its fused order behind them.</td><td>30</td></tr>
+            <tr><td><code>RERANK_MIN_SPREAD</code></td><td>Ignore the reranking when its scores are too flat to mean anything — a compound question once produced a 0.0004 spread, and sorting it promoted an unrelated case to rank 1.</td><td>0.02</td></tr>
+            <tr><td><code>HYDE_MODE</code></td><td>When to draft a hypothetical answer to bridge vocabulary: <code>off</code> / <code>auto</code> / <code>always</code>.</td><td>auto</td></tr>
+            <tr><td><code>HYDE_MIN_SIM</code></td><td>Fire HyDE when the whole question matches this poorly.</td><td>0.68</td></tr>
+            <tr><td><code>HYDE_CLAUSE_MIN_SIM</code></td><td>Fire HyDE when the worst-covered <em>ask</em> of a compound question falls below this — the trigger the whole-question check can't see.</td><td>0.70</td></tr>
+            <tr><td><code>OCR_ENABLED</code></td><td>Turn OCR on/off.</td><td>true</td></tr>
+            <tr><td><code>OCR_LANGUAGE</code> / <code>OCR_DPI</code></td><td>Tesseract language; render resolution (higher = better, slower).</td><td>eng / 300</td></tr>
+            <tr><td><code>OCR_MIN_CHARS</code></td><td>Below this many characters, treat a PDF as scanned and try OCR.</td><td>200</td></tr>
+            <tr><td><code>TESSERACT_CMD</code></td><td>Explicit path to <code>tesseract.exe</code> if auto-detection fails.</td><td>auto</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <span class="tag">Rule of thumb</span>
+        <p>Settings that change the <strong>index itself</strong> (<code>EMBED_MODEL</code>, <code>CHUNK_SIZE</code>) need a <code>ingest --reset</code>. Retrieval-only settings (<code>TOP_K</code>, weights) take effect immediately — no re-ingest.</p>
+      </div>
+      <div class="note">
+        <span class="tag">If you touch a similarity threshold, measure it</span>
+        <p>The two <code>HYDE_*_SIM</code> numbers look like taste. They aren't. Write ~5 questions the corpus answers and ~5 it can't, print their <em>raw</em> similarities (fused scores are normalized per-query and can't be compared across questions), and put the threshold in the gap between the two ranges.</p>
+        <p>If the ranges <em>overlap</em>, your signal is wrong and no number will save it. That's exactly what happened tuning <code>HYDE_CLAUSE_MIN_SIM</code>: scoring every clause of a question gave answerable 0.617–0.717 vs. unanswerable 0.520–0.632 — total overlap, because the weakest clause of an answerable question is its narrative setup, not its question. Scoring only the <em>asks</em> gave 0.721–0.783 vs. 0.605–0.678, and 0.70 fell out on its own.</p>
+      </div>
+    </section>
+
+    <!-- 12b -->
+    <section class="doc" id="s12b">
+      <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">Why it's slow, and what actually helps</h2></div>
+      <p>Worth knowing before judging the system: on a machine with <strong>no GPU</strong>, a 14B model spends most of its time on two things — and only one of them is what people assume.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Phase</th><th>Rate</th><th>Per question</th></tr></thead>
+          <tbody>
+            <tr><td>Retrieval + reranking</td><td>—</td><td>~4s</td></tr>
+            <tr><td><strong>Prefill</strong> — <em>reading</em> the prompt</td><td>~38 tok/s</td><td><strong>~58s</strong></td></tr>
+            <tr><td><strong>Generation</strong> — <em>writing</em> the answer</td><td>~7.8 tok/s</td><td><strong>~51s</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Prefill is about half the wall clock, and it scales with <code>TOP_K</code>, not with model size.</strong> Dropping <code>TOP_K</code> from 10 to 6 removed ~1,100 tokens of prompt and cut ~30 seconds per question with no model change at all — the lever most people skip while arguing about parameter counts.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Change</th><th>Effect</th><th>Costs you</th></tr></thead>
+          <tbody>
+            <tr><td><code>OLLAMA_KEEP_ALIVE</code></td><td>avoids a 9&nbsp;GB reload after idle</td><td>idle RAM — free</td></tr>
+            <tr><td>Show sources before generating</td><td>~16s off the <em>perceived</em> wait</td><td>nothing</td></tr>
+            <tr><td>Lower <code>TOP_K</code></td><td>~7s per passage dropped</td><td>less context per answer</td></tr>
+            <tr><td>Cap answer length</td><td>linear</td><td>shorter answers</td></tr>
+            <tr><td>Smaller model</td><td>~2× per halving</td><td>instruction adherence</td></tr>
+            <tr><td>A GPU</td><td>10–50×</td><td>hardware</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Perceived speed is a different problem — and cheaper to fix</h3>
+      <p>The generator is <strong>lazy</strong>: retrieval finishes and hands back the passages before the model has read a single token. So Haven shows the laws it found at <strong>~7s</strong>, while the answer itself does not start until <strong>~23s</strong>. You get something real to read 16 seconds earlier, at no cost to the answer.</p>
+      <div class="note warn">
+        <span class="tag">Don't benchmark against yourself</span>
+        <p>The most common bad measurement, and one made while writing this guide: timing a query while the app is still running. A Streamlit process holding 1.5&nbsp;GB of models, twelve Python processes and Ollama all competing inflated a time-to-first-token from <strong>23s to 114s</strong> — and produced the confident, wrong conclusion that recent changes had made things worse. Stop the app, check what else holds models, warm what you are not measuring, then time it.</p>
+      </div>
+    </section>
+
+    <!-- 13 -->
+    <section class="doc" id="s13">
+      <div class="sec-head"><span class="num serif">§&nbsp;13</span><h2 class="serif">The corpus: what's inside &amp; how to grow it</h2></div>
+      <p>The index described here holds <strong>7,935 chunks from 154 documents</strong>, across five sources:</p>
+      <ul>
+        <li><strong>Statutes</strong> (LawPhil): the Medical Act of 1959, the UHC Act, Anti-Hospital Deposit/Detention laws, Data Privacy Act, Civil Code, Revised Penal Code, and more.</li>
+        <li><strong>PRC issuances</strong>: Board of Medicine Board Law, Code of Ethics, resolutions, and the disciplinary/administrative-investigation rules (these last came in via OCR).</li>
+        <li><strong>DOH issuances</strong> (Supreme Court E-Library): hospital-licensing orders, implementing rules for the patients'-rights laws, and the Magna Carta of Public Health Workers.</li>
+        <li><strong>Jurisprudence</strong> (Supreme Court E-Library): medical malpractice, informed consent, hospital liability, records &amp; certificates, surgical cases.</li>
+        <li><strong>Bills, payment &amp; non-payment</strong>: PhilHealth's charter and No-Balance-Billing circulars, HMO payment cases, senior-citizen and PWD discount laws with their IRRs, government medical assistance, small-claims procedure — and the deceased-patient chain: claims against the estate, who inherits the debt, and release of the remains.</li>
+      </ul>
+      <h3>Three ways to add more</h3>
+      <ol>
+        <li><strong>Drop your own files</strong> into <code>corpus/</code>, then <code>ingest</code>. Text-based PDFs work best; scanned ones are OCR'd automatically.</li>
+        <li><strong>Add URLs to a seed file</strong> (<code>fetch/seeds*.txt</code>, format <code>name | url</code>) and run the fetcher. Good sources: LawPhil, the Supreme Court E-Library.</li>
+        <li><strong>Mix both.</strong></li>
+      </ol>
+
+      <h3>Check the <em>shape</em> of what you fetched, not just that it downloaded</h3>
+      <p>A file can arrive complete, correct and on-topic and still be the wrong <em>shape</em> to index. Two patterns recur, and catching either after indexing costs a full <code>ingest --reset</code> rebuild.</p>
+      <ul>
+        <li><strong>One page holding many numbered documents.</strong> LawPhil publishes Rules of Court 72–109 as a single 148,000-character page. Indexed whole it produced <strong>199 chunks sharing just 25 section labels</strong> — every rule restarts its numbering, so <code>Section 2.</code> meant 27 different things — with no citable identity at all. The passage answering a real question lost to its own 198 siblings: retrieval found the right <em>file</em> and the wrong <em>section</em>, and the answer denied a rule the file plainly contains. <code>fetch/split_rules_of_court.py</code> splits it per rule; Rule 86 went from competing among 199 chunks to 13, every one citable.</li>
+        <li><strong>PDFs padded with restated text.</strong> Official PDFs often append comparative tables or consolidated redlines. The 2022 small-claims rules PDF was 484,000 characters — <strong>52% of it the same rule text printed three times</strong> side by side. The duplicate filter can't help: three-column layout makes the copies textually different. Trim before indexing.</li>
+      </ul>
+      <p>Whenever you trim or split, say so in the seed file — what you removed and why. And remember re-fetching restores the original, so a split must be a re-runnable script, not a one-off edit.</p>
+
+      <div class="note">
+        <span class="tag">Garbage in, garbage out — with one caveat</span>
+        <p>A thin corpus gives thin answers, and adding relevant, high-quality documents beats tweaking model settings. But the caveat cuts the other way: <strong>don't add documents to fix a ranking problem.</strong> If an answer is wrong, first find out whether the source is missing, present but out-ranked, or present and retrieved as the wrong chunk — those need opposite fixes, and only the first is solved by adding sources.</p>
+      </div>
+    </section>
+
+    <!-- 14 -->
+    <section class="doc" id="s14">
+      <div class="sec-head"><span class="num serif">§&nbsp;14</span><h2 class="serif">Troubleshooting &amp; FAQ</h2></div>
+      <h3>"Ollama isn't reachable" when I run <code>ask</code></h3>
+      <p>You haven't installed/started Ollama, or the model isn't pulled. Install from ollama.com, run <code>ollama pull qwen2.5:7b-instruct</code>, confirm with <code>ollama list</code>. Then <code>cli.py status</code> should show Ollama = OK.</p>
+      <h3>The answer says "The provided corpus does not cover this."</h3>
+      <p>That's the system being <em>honest</em>, not broken. The retrieved chunks didn't contain the answer. Fix by adding the relevant document and re-ingesting. This is a feature — it's refusing to make things up.</p>
+      <h3>The answer is confident but wrong — or it answered only half my question</h3>
+      <p>This is the failure mode to take most seriously, because nothing looks broken. Don't start adding documents; first find out <em>which</em> of three things went wrong, because they need opposite fixes:</p>
+      <ol>
+        <li><strong>The source is missing</strong> → corpus problem. Add it, re-ingest.</li>
+        <li><strong>The source is there but out-ranked</strong> → retrieval problem. Adding more documents makes this <em>worse</em>.</li>
+        <li><strong>The source was retrieved, but the wrong chunk of it</strong> → chunking / document-shape problem (see §13).</li>
+      </ol>
+      <p>Two cheap probes tell them apart — re-ask just the failing part in the corpus's own vocabulary, and look at raw retrieval with the LLM bypassed:</p>
+      <pre><code>.\.venv\Scripts\python.exe cli.py ask "What is the deadline for filing a
+   money claim against the estate of a deceased person?"
+
+.\.venv\Scripts\python.exe -c "from ragmed import retriever; [print(
+   f'{r.score:.3f} {r.metadata.get(\"source\")}') for r in
+   retriever.retrieve('your question', top_k=25)]"</code></pre>
+      <p>A real example from this corpus: a compound question about a deceased patient's unpaid bill produced a fluent answer denying any filing deadline existed. The narrow re-ask ranked the correct document <strong>#2</strong>. Raw retrieval showed the compound question had it <strong>nowhere in the top 25</strong>. That one comparison proved the corpus was fine and pointed the fix at retrieval — saving a pointless hunt for documents already sitting in the index.</p>
+      <p>Also glance at the <strong>source list under every answer</strong>: if 8 of 10 citations name the same document, the context was crowded even if this answer happened to come out right.</p>
+
+      <h3>A document I added isn't showing up</h3>
+      <p>Three usual causes: (1) you forgot to <code>ingest</code>; (2) it's a scanned PDF and OCR is off or Tesseract isn't found (check <code>cli.py status</code>); (3) unsupported file type. Run <code>ingest</code> and read its summary — it lists skipped files and why.</p>
+      <h3>How do I know the answer is correct?</h3>
+      <p>Every answer lists its <strong>sources</strong> (law, section, file). Open the cited section in the actual document and verify. RAG makes this easy by design — but it's still on you to look.</p>
+      <h3>Is any of my data sent to the cloud?</h3>
+      <p>No. Embeddings, the vector store, and the LLM all run locally. The internet is touched only for: the first download of the embedding model, when <em>you</em> run a fetcher, and pulling an Ollama model. Everyday questions are 100% offline.</p>
+      <h3>Is this legal advice?</h3>
+      <p>No. It is a <em>legal-information retrieval tool</em> over a corpus someone curated. It does not interpret the law, does not account for facts specific to a case, and does not replace a licensed Philippine attorney. The system prompt requires it to say so, and every answer ships with its sources precisely so a human can check them. <strong>Verify against the cited text before relying on anything.</strong></p>
+      <h3>How accurate is it, honestly?</h3>
+      <p>Accuracy depends far more on the corpus than on the model. When a question is squarely covered by an indexed document, answers are generally well-grounded and correctly cited. When it is not, the system is prompted to refuse — but the failure mode to watch for is the one above: a <em>fluent, wrong</em> answer that reads exactly like a correct one. This guide records several real examples, including one where the system confidently denied a filing deadline that the Rules of Court impose. Read the citations, not just the prose.</p>
+    </section>
+
+    <!-- 15 -->
+    <section class="doc" id="s15">
+      <div class="sec-head"><span class="num serif">§&nbsp;15</span><h2 class="serif">How to extend it</h2></div>
+      <p>Natural directions once the basics are clear, roughly easiest first:</p>
+      <ol>
+        <li><strong>Point it at a different corpus.</strong> Nothing here is specific to Philippine law except the seed lists and a few identifier patterns in <code>chunking.py</code>. Swap those and the same engine indexes RFCs, policy manuals, or internal documentation.</li>
+        <li><strong>Grow the corpus</strong> — the jurisprudence, negligence, surgery and billing bundles are already in; add more PRC resolutions and DOH orders you care about. Check the <em>shape</em> of anything new before ingesting (§13).</li>
+        <li><strong>Tune retrieval</strong> — nudge <code>LEXICAL_WEIGHT</code> up for exact-citation questions; try <code>TOP_K = 8</code> for more context. If you touch a similarity threshold, <strong>measure it, don't guess</strong> (§12).</li>
+        <li><strong>Run the tests after changing the engine</strong> — <code>tests/</code> holds 164 checks. Add a case whenever you fix something.</li>
+        <li><strong>The reranker is already in</strong> (§8) — if queries feel slow, that is where the seconds go: <code>RERANK_ENABLED=false</code> or the MiniLM model. Before tuning it, work out whether your problem is <strong>ordering</strong> (right document, wrong chunk — its job) or <strong>reach</strong> (the chunk never retrieved — it cannot help). They look identical in a bad answer and need opposite fixes.</li>
+        <li><strong>Improve citations</strong> — parse section numbers even more precisely, or add clickable links back to source documents in the web UI.</li>
+        <li><strong>Try a bigger LLM</strong> — <code>ollama pull</code> a larger model and set <code>LLM_MODEL</code>. Quality usually improves with size, at some speed cost.</li>
+      </ol>
+      <div class="recap">
+        <div class="tag">Lock it in — the one-paragraph recap</div>
+        <p>Your system <strong>indexes</strong> documents once (read → chunk → embed → store), then <strong>answers</strong> questions on demand (embed the question → hybrid-search for the best chunks → feed them to a local LLM with strict "cite your sources, don't make things up" instructions → return the answer plus its sources). Everything runs on your machine. The librarian finds the pages; the assistant writes the answer from those pages only. <strong>That's RAG.</strong></p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <p>RAG Field Guide · a walkthrough of a local, citation-first retrieval system for Philippine medical law · built and measured in the open.</p>
+</footer>
+
+<script>
+(function () {
+  // ---- Theme toggle (persisted; overrides OS preference) ----
+  var root = document.documentElement;
+  var btn = document.getElementById('themeToggle');
+  var icon = document.getElementById('themeIcon');
+  var label = document.getElementById('themeLabel');
+  function currentIsDark() {
+    var explicit = root.getAttribute('data-theme');
+    if (explicit) return explicit === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+  function paint() {
+    var dark = currentIsDark();
+    icon.textContent = dark ? '☾' : '☀';
+    label.textContent = dark ? 'Dark' : 'Light';
+  }
+  try {
+    var saved = localStorage.getItem('ragguide-theme');
+    if (saved) root.setAttribute('data-theme', saved);
+  } catch (e) {}
+  paint();
+  btn.addEventListener('click', function () {
+    var dark = currentIsDark();
+    var next = dark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('ragguide-theme', next); } catch (e) {}
+    paint();
+  });
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint);
+
+  // ---- Active section highlight in the TOC ----
+  var links = Array.prototype.slice.call(document.querySelectorAll('#tocList a'));
+  var map = {};
+  links.forEach(function (a) { map[a.getAttribute('href').slice(1)] = a; });
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section.doc'));
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (en) {
+      if (en.isIntersecting) {
+        links.forEach(function (l) { l.classList.remove('active'); });
+        var a = map[en.target.id];
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-45% 0px -50% 0px', threshold: 0 });
+  sections.forEach(function (s) { io.observe(s); });
+})();
+</script>

@@ -1,0 +1,52 @@
+# Philippine Supreme Court jurisprudence on SURGICAL practice — the
+# pre-operative, intra-operative, and post-operative duties of surgeons,
+# anesthesiologists, and hospitals.
+#
+# Format:  <name> | <url>
+# Fetch with:
+#   python fetch/fetch_seeds.py --file fetch/seeds_surgery.txt --subdir jurisprudence
+# (Same subdir as seeds_jurisprudence.txt on purpose — these are the same kind
+# of document and the loader/chunker treats them identically.)
+#
+# Why a separate seed file: seeds_jurisprudence.txt is already fetched, and the
+# fetcher skips entries it has ("[have]"). Keeping new work in its own file
+# makes a run fast and its output easy to read.
+#
+# --- IMPORTANT: later rulings on cases already in the corpus ---
+# The corpus holds only the ORIGINAL decisions in Ramos and PSI v. Agana, but
+# both were substantially modified on reconsideration. Without the resolutions
+# below, the RAG can state a superseded holding as current law. Note that the
+# chunker tags by G.R. number, so a resolution and its parent decision carry the
+# SAME citation label — the year in the entry name is what distinguishes them.
+
+# --- Post-operative / intra-operative: doctrine as finally settled ---
+Ramos v. Court of Appeals (G.R. 124354) 2002 Resolution - Anesthesiologist Pre-Operative Evaluation and Surgeon Responsibility on Reconsideration | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/50729
+Professional Services Inc. v. Agana (G.R. 126297) 2008 Resolution - Hospital Liability on Reconsideration | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/44890
+Professional Services Inc. v. Agana (G.R. 126297) 2010 Resolution - Final Ruling on Corporate Negligence and Ostensible Agency | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/53546
+
+# --- Pre-operative duties: scheduling, attendance, preparation ---
+Ilao-Oreta v. Spouses Ronquillo (G.R. 172406) - Surgeon Failure to Arrive for Scheduled Laparoscopic Procedure, Gross Negligence Distinguished | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/45236
+
+# --- Intra-operative: delegation, supervision, obstetric surgery ---
+Dr. Idol Bondoc v. Mantala (G.R. 203080) - Delegation of Delivery to Midwife, Ruptured Uterus, Grave Misconduct of a Government Physician | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/58105
+
+# --- Consent and authority to operate / retrieve organs ---
+Dr. Filoteo Alano v. Magud-Logmao (G.R. 175540) - Authority and Consent for Organ Retrieval from a Brain-Dead Patient | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56800
+
+# --- Pre-operative preparation: nursing duties before a scheduled operation ---
+Reyno and De Vera v. Baltazar (G.R. 227775) - Nurses Failure to Perform Blood Sugar Tests and Administer Insulin Before Scheduled Debridement of a Diabetic Patient | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/68785
+
+# --- Hospital duties on admission and TRANSFER of patients ---
+# Added because the RAG correctly refused a question on transferring critically
+# ill patients for financial reasons: the corpus had RA 10932 and its IRR but no
+# case construing the duties they impose. This is the SC ruling on that statute.
+Private Hospitals Association of the Philippines v. Medialdea (G.R. 234448) - Constitutionality of RA 10932 and the Duties Imposed on Hospitals and Doctors in Emergency Cases and Patient Transfers | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/64748
+
+# --- Rejected after fetching and inspecting (kept as a record; do not re-add) ---
+# G.R. 176287 (2011) — Hospital Management Services v. Employees Association.
+#   A LABOR case on a nurse's dismissal, not medical negligence. Out of scope.
+# G.R. 205659 (2022) — PSI Darwin Valderas v. Sulse. "PSI" here is Police Senior
+#   Inspector, not Professional Services Inc. A police administrative case.
+# G.R. 246787 (2023) — Spouses Llonillo v. People. Not medical.
+# Lesson: search hits that merely co-occur with medical vocabulary must be
+# opened and checked before they enter the corpus.

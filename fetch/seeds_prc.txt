@@ -1,0 +1,23 @@
+# PRC (Professional Regulation Commission) issuances — medical practice,
+# licensing, ethics, and administrative/disciplinary procedure.
+#
+# Format:  <name> | <url>   (most are PDFs on prc.gov.ph)
+# Fetch with:  python fetch/fetch_seeds.py --file fetch/seeds_prc.txt --subdir prc
+# URLs verified live 2026-07 — if one 404s, search prc.gov.ph for the title.
+
+# --- Board of Medicine: enabling law & ethics ---
+PRC Board of Medicine - Board Law (Medical Act) | https://www.prc.gov.ph/sites/default/files/Medicine%20-%20Board%20Law_0.PDF
+PRC Board of Medicine - Code of Ethics | https://www.prc.gov.ph/uploaded/documents/Board%20of%20Medicine-CE.pdf
+PRC Board of Medicine Resolution No. 2015-25 | https://www.prc.gov.ph/uploaded/documents/Board%20of%20Medicine%20Resolution%20No.%202015-25.pdf
+
+# --- Administrative / disciplinary procedure (complaints vs professionals) ---
+# NOTE: Resolution 2004-233A is fetched from the E-Library as clean full-text
+# HTML (the prc.gov.ph PDFs below are scanned images that rely on OCR).
+PRC Resolution 2004-233A - Rules of Procedure in Administrative Investigations | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/11/43277
+PRC Resolution 2013-775 - Revised Rules and Regulations in Administrative Investigations | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/76610
+PRC New Rules of Procedure in Administrative Investigations (2011) | https://www.prc.gov.ph/sites/default/files/NewRulesOfProcInAdministrativeInvestigation03102011.pdf
+PRC Rules on Administrative Cases 2017 (Resolution 2017-1033-A) | https://prc.gov.ph/sites/default/files/Legal-RulesAdminCases2017-1033(A).pdf
+PRC 2025 Revised Rules in Administrative Investigations | https://www.prc.gov.ph/sites/default/files/2025-1949%20%20published%202025%20Revised%20Rules%20In%20Administrative%20Investigations_0_0.pdf
+
+# --- General PRC issuances ---
+PRC Memorandum Order No. 34 Series of 2021 | https://www.prc.gov.ph/sites/default/files/2021-34.pdf

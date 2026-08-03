@@ -1,0 +1,41 @@
+# Seed URLs for key Philippine medical-law sources.
+#
+# Format:  <name> | <url>
+# Lines starting with # are comments. Edit freely — add or remove entries.
+# The fetcher downloads each URL, cleans it to text, and drops it in
+# corpus/_fetched/ so `python cli.py ingest` will pick it up.
+#
+# NOTE: URLs point to LawPhil (lawphil.net), a long-standing free legal
+# archive. Verify each link resolves before a big run — site paths change.
+# If a link 404s, search https://lawphil.net for the RA number and update it.
+
+# --- Core medical practice & licensing ---
+Medical Act of 1959 (RA 2382) | https://lawphil.net/statutes/repacts/ra1959/ra_2382_1959.html
+Philippine Medical Technology Act (RA 5527) | https://lawphil.net/statutes/repacts/ra1969/ra_5527_1969.html
+PRC Modernization Act (RA 8981) | https://lawphil.net/statutes/repacts/ra2000/ra_8981_2000.html
+Creating the Professional Regulation Commission (PD 223) | https://lawphil.net/statutes/presdecs/pd1973/pd_223_1973.html
+
+# --- Patients' rights & hospital obligations ---
+Anti-Hospital Deposit Law (RA 8344) | https://lawphil.net/statutes/repacts/ra1997/ra_8344_1997.html
+Strengthened Anti-Hospital Deposit Law (RA 10932) | https://lawphil.net/statutes/repacts/ra2017/ra_10932_2017.html
+Anti-Hospital Detention of Patients (RA 9439) | https://lawphil.net/statutes/repacts/ra2007/ra_9439_2007.html
+
+# --- Health system & public health ---
+Universal Health Care Act (RA 11223) | https://lawphil.net/statutes/repacts/ra2019/ra_11223_2019.html
+Magna Carta of Public Health Workers (RA 7305) | https://lawphil.net/statutes/repacts/ra1992/ra_7305_1992.html
+Mental Health Act (RA 11036) | https://lawphil.net/statutes/repacts/ra2018/ra_11036_2018.html
+Universally Accessible Cheaper and Quality Medicines Act (RA 9502) | https://lawphil.net/statutes/repacts/ra2008/ra_9502_2008.html
+National Blood Services Act (RA 7719) | https://lawphil.net/statutes/repacts/ra1994/ra_7719_1994.html
+Responsible Parenthood and Reproductive Health Act (RA 10354) | https://lawphil.net/statutes/repacts/ra2012/ra_10354_2012.html
+
+# --- Data & privacy (patient records) ---
+Data Privacy Act of 2012 (RA 10173) | https://lawphil.net/statutes/repacts/ra2012/ra_10173_2012.html
+
+# --- Criminal & civil law hooks for medical liability ---
+# RPC: the LawPhil path 404s (site paths changed). Served from the SC E-Library
+# instead — same host as the jurisprudence seeds, which the fetcher handles.
+# Matters for: Art. 171/172 falsification, Art. 174 false medical certificates,
+# Art. 365 criminal negligence (reckless/simple imprudence).
+Revised Penal Code (Act No. 3815) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/28/20426
+Civil Code of the Philippines (RA 386) | https://lawphil.net/statutes/repacts/ra1949/ra_386_1949.html
+Comprehensive Dangerous Drugs Act (RA 9165) | https://lawphil.net/statutes/repacts/ra2002/ra_9165_2002.html

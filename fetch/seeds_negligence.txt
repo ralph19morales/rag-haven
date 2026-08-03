@@ -1,0 +1,35 @@
+# Negligence theories beyond surgical malpractice: medical RECORDS and
+# CERTIFICATES, and hospital EQUIPMENT / services.
+#
+# Fetch with:
+#   python fetch/fetch_seeds.py --file fetch/seeds_negligence.txt --subdir jurisprudence
+#   (the RA below is fetched into lawphil — see the note on its line)
+#
+# Context: an audit on 2026-07-26 found the statutory backbone was never
+# indexed — seeds.txt had never been fetched, so the Civil Code and Revised
+# Penal Code were absent entirely. Those two carry most of these theories:
+#   * RPC Art. 171/172  — falsification of documents
+#   * RPC Art. 174      — false medical certificates (the on-point offence)
+#   * RPC Art. 365      — reckless / simple imprudence
+#   * Civil Code 2176   — quasi-delict, the general negligence action
+#   * Civil Code 2180   — vicarious liability of employers/hospitals
+#   * Civil Code 2187   — liability for defective goods
+# Fetching seeds.txt is what makes the cases below answerable; the cases alone
+# would leave the RAG quoting doctrine with no statute to cite.
+
+# --- Medical records / certificates: accuracy and liability ---
+St. Martin Polyclinic v. LWV Construction (G.R. 217426) - Clinic Liability for an Erroneous Medical Certificate Declaring a Worker Fit, Quasi-Delict Basis | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/63692
+
+# --- Hospital equipment and services withdrawn from a patient ---
+# The closest Philippine analogue to a "life-support / equipment failure" claim:
+# the hospital removed facilities from a confined patient's room over an unpaid
+# bill and was sued when her condition worsened.
+Manila Doctors Hospital v. So Un Chua and Vicky Ty (G.R. 150355) - Withdrawal of Hospital Facilities and Services from a Confined Patient Over an Unpaid Bill | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/41589
+
+# --- Defective products: the liability basis for failed devices/equipment ---
+# NOTE: fetch this one into the statute subdir, not jurisprudence:
+#   python fetch/fetch_seeds.py --file fetch/seeds_negligence.txt --subdir lawphil
+# Judgment call: the "drugs, devices & prescribing" bundle is parked, but a
+# ventilator/equipment-failure question needs a product-liability basis, and
+# Civil Code Art. 2187 reaches foodstuffs and similar goods rather than devices.
+Consumer Act of the Philippines (RA 7394) - Product Quality, Safety and Liability | https://lawphil.net/statutes/repacts/ra1992/ra_7394_1992.html

@@ -1,0 +1,48 @@
+# Philippine Supreme Court jurisprudence on medical malpractice / negligence
+# and the doctrine of informed consent.
+#
+# Format:  <name> | <url>   (full-text HTML from the Supreme Court E-Library)
+# Fetch with:  python fetch/fetch_seeds.py --file fetch/seeds_jurisprudence.txt --subdir jurisprudence
+# URLs verified live 2026-07.
+#
+# Why these matter: doctrines like "informed consent" and the standard of care
+# for medical negligence are defined by the Supreme Court, NOT by statute — so
+# a corpus of only statutes/PRC/DOH rules cannot answer questions about them.
+
+# --- The landmark informed-consent case ---
+Dr. Rubi Li v. Spouses Soliman (G.R. 165279) - Doctrine of Informed Consent | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/37801
+
+# --- Core medical-negligence / malpractice standard-of-care cases ---
+Cereno v. Court of Appeals (G.R. 167366) - Physician Negligence Standard | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/55194
+De Jesus v. Dr. Uyloan (G.R. 234851) - Medical Malpractice Elements | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/68121
+Borromeo v. Family Care Hospital (G.R. 191018) - Burden of Proof in Malpractice | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/61596
+Aquino & Reyes v. Heirs of Calayag (G.R. 158461) - Anesthetic Negligence | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/55139
+
+# --- Landmark hospital-liability & standard-of-care cases (added 2026-07-25) ---
+Professional Services Inc. v. Agana (G.R. 126297) - Hospital Liability, Gauze Left in Patient | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/40875
+Cruz v. Court of Appeals (G.R. 122445) - Reckless Imprudence, Surgeon Negligence | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/35365
+Ramos v. Court of Appeals (G.R. 124354) - Res Ipsa Loquitur, Anesthesia Injury | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/50729
+Nogales v. Capitol Medical Center (G.R. 142625) - Ostensible Agency / Hospital Liability | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/40480
+Reyes v. Sisters of Mercy Hospital (G.R. 130547) - Standard of Care, Expert Testimony | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/36260
+Solidum v. People (G.R. 192123) - Criminal Medical Negligence, Res Ipsa Limits | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56702
+
+# --- Additional malpractice / negligence cases (added 2026-07-25) ---
+Batiquin v. Court of Appeals (G.R. 118231) - Res Ipsa Loquitur, Object Left in Patient | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/33944
+Lucas v. Tuano (G.R. 178763) - Four Elements of Medical Negligence, Causation | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/49104
+Jarcia v. People (G.R. 187926) - Criminal Negligence, Emergency Room Duty of Care | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/23703
+Casumpang v. Cortejo (G.R. 171127) - Misdiagnosis, Physician and Hospital Liability | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/60057
+Cabugao and Ynzon v. People (G.R. 163879) - Criminal Negligence, Appendicitis Death | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/57330
+Flores v. Pineda (G.R. 158996) - Negligence, Failure to Manage Diabetic Patient | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/48317
+Garcia v. Salvador (G.R. 168512) - Negligent Diagnostic Laboratory Result | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/41343
+Garcia-Rueda v. Pascasio (G.R. 118141) - Medical Negligence Death, Prosecution of Complaint | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/35215
+
+# --- Further malpractice cases: distinct doctrines (added 2026-07-25) ---
+Cayao-Lasam v. Ramolete (G.R. 159132) - Contributory Negligence, D&C Procedure | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/48226
+Cantre v. Go (G.R. 160889) - Res Ipsa Loquitur, Burn Injury During Delivery | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/45713
+Rosit v. Davao Doctors Hospital (G.R. 210445) - Informed Consent, Res Ipsa Without Expert | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/61440
+Lumantas v. Calapiz (G.R. 163753) - Civil Liability Survives Criminal Acquittal | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/56617
+Our Lady of Lourdes Hospital v. Capanzana (G.R. 189218) - Nurse Negligence, Hospital Supervision | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/62965
+Dela Torre v. Imbuido (G.R. 192973) - Negligence, Death After Caesarean Section | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/57768
+Bontilao v. Gerona (G.R. 176675) - Res Ipsa, Post-Operative Negligence | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/54530
+Allarey v. Dela Cruz and Manila East Medical Center (G.R. 250919) - Apparent Authority (Recent) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/67913
+PRC and Board of Medicine v. De Guzman (G.R. 144681) - PRC Regulatory Authority over Licensure | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/47391

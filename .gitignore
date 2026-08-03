@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Environment / secrets
+.env
+
+# Data & indexes (regenerable)
+data/
+corpus/_fetched/
+*.pkl
+
+# Keep the corpus folder but not its (potentially large/copyrighted) contents
+corpus/*
+!corpus/README.md
+!corpus/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Claude Code local settings — machine-specific permission rules containing
+# absolute home-directory paths. Project-scope .claude/settings.json IS meant
+# to be shared, so it is deliberately not ignored here.
+.claude/settings.local.json
+.claude/settings.local.json.bak

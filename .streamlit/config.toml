@@ -1,0 +1,94 @@
+# Streamlit configuration for the RAG web UI.
+
+[server]
+# The default "watchdog" file-watcher walks every imported module's path to
+# enable hot-reload. With torch/transformers installed, that walk triggers a
+# lazy import of optional image models (zoedepth) that need torchvision — a
+# library this app doesn't use — producing a noisy ModuleNotFoundError.
+# We don't need hot-reload for running the app, so turn the watcher off.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+
+# ---------------------------------------------------------------------------
+# Theme — "gilt on blue buckram": the palette of a law-library binding.
+# Cool pearl ground, blue-black ink, slate indigo, brass reserved for warnings.
+# Matches the published field guide so the app and the docs read as one thing.
+#
+# FONTS ARE THE BUILT-IN KEYWORDS ON PURPOSE. Streamlit can pull a face from
+# Google Fonts, but this app's whole premise is that nothing leaves the machine
+# at query time — a webfont request would break that, and fail offline besides.
+# Serif headings carry the legal register; the body stays sans for legibility.
+# ---------------------------------------------------------------------------
+[theme]
+font = "sans-serif"
+headingFont = "serif"
+codeFont = "monospace"
+baseFontSize = 16
+headingFontSizes = ["30px", "23px", "19px", "16px", "14px", "13px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+codeFontSize = "0.84rem"
+baseRadius = "small"
+buttonRadius = "small"
+showWidgetBorder = true
+showSidebarBorder = true
+linkUnderline = false
+# Mid-tones, so one palette stays legible on both the light and dark grounds
+# (per-mode chart palettes are not a supported config option).
+chartCategoricalColors = ["#5a6ea3", "#5a8a72", "#a8873f", "#a85f68", "#7a6d9e", "#5a95a1", "#78838f"]
+
+[theme.light]
+primaryColor = "#38476b"            # slate indigo — 9.2:1 against white button text
+backgroundColor = "#f6f7f9"
+secondaryBackgroundColor = "#e9edf2"
+textColor = "#141922"               # blue-black — 16.4:1 on the ground
+linkColor = "#2e3c5e"
+borderColor = "#d5dae1"
+codeBackgroundColor = "#e7eaef"
+codeTextColor = "#22304d"
+dataframeBorderColor = "#d5dae1"
+dataframeHeaderBackgroundColor = "#e9edf2"
+# Semantic colours pulled toward the palette so status never shouts.
+greenColor = "#3f6b52"
+redColor = "#8c3a44"
+orangeColor = "#92742f"             # brass
+yellowColor = "#8a7326"
+blueColor = "#38476b"
+violetColor = "#5a4f7a"
+grayColor = "#616b7a"
+
+[theme.light.sidebar]
+backgroundColor = "#eaedf1"
+secondaryBackgroundColor = "#dfe4ea"
+codeBackgroundColor = "#dfe4ea"
+textColor = "#141922"
+borderColor = "#d5dae1"
+primaryColor = "#38476b"
+
+[theme.dark]
+primaryColor = "#5a6ea3"            # 5.0:1 against white button text
+backgroundColor = "#10151c"
+secondaryBackgroundColor = "#1a2029"
+textColor = "#e4e8ee"               # 14.9:1 on the ground
+linkColor = "#a3b6e2"
+borderColor = "#28313d"
+codeBackgroundColor = "#151b24"
+codeTextColor = "#b9cbe8"
+dataframeBorderColor = "#28313d"
+dataframeHeaderBackgroundColor = "#1a2029"
+greenColor = "#6f9e83"
+redColor = "#cf8b93"
+orangeColor = "#d0aa63"             # brass
+yellowColor = "#cbb26a"
+blueColor = "#a3b6e2"
+violetColor = "#a294c4"
+grayColor = "#8b95a3"
+
+[theme.dark.sidebar]
+backgroundColor = "#0c1116"
+secondaryBackgroundColor = "#161c25"
+codeBackgroundColor = "#151b24"
+textColor = "#e4e8ee"
+borderColor = "#28313d"
+primaryColor = "#5a6ea3"

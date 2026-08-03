@@ -1,0 +1,33 @@
+# DOH (Department of Health) issuances — hospital/facility licensing,
+# patients' rights, health-worker rules, and IRRs of major health statutes.
+#
+# Format:  <name> | <url>
+# Fetch with:  python fetch/fetch_seeds.py --file fetch/seeds_doh.txt --subdir doh
+#
+# Primary source: the Supreme Court E-Library (elibrary.judiciary.gov.ph) —
+# authoritative, full-text HTML, and reliably fetchable. (The DOH's own
+# hfsrb.doh.gov.ph mirror sits behind a Cloudflare bot-challenge that blocks
+# scripted download; use a browser for those if you need the exact PDF.)
+# URLs verified live 2026-07.
+
+# --- Hospital & health-facility licensing ---
+DOH BHFS AO 70-A s.2002 Rules Governing Licensure and Operation of Hospitals | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/42552
+DOH AO 150 s.2004 Amending AO 70-A (Hospital Licensure) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/46457
+DOH AO 2016-0042 Guidelines on DOH Permit to Construct | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/7/93851
+
+# --- Patients' rights: anti-detention & anti-deposit (IRRs) ---
+DOH AO 2008-0001 IRR of RA 9439 (Anti-Detention of Patients) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/52151
+DOH AO 2018-0012 IRR of RA 10932 (Strengthened Anti-Hospital Deposit Law) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/90415
+DOH AO 2009-0011 IRR of RA 9442 (Medical Discounts for PWDs) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/10/48955
+
+# --- Health workers ---
+RA 7305 Magna Carta of Public Health Workers | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/2/3194
+DOH Revised IRR of the Magna Carta of Public Health Workers (RA 7305) | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/11/50646
+DOH Code of Conduct of Public Health Workers | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/11/50651
+
+# --- Universal Health Care Act (RA 11223) implementation ---
+UHC Act (RA 11223) Implementing Rules and Regulations | https://www.philhealth.gov.ph/about_us/UHC-IRR_Signed.pdf
+DOH AO 2021-0026 UHC Monitoring and Evaluation Framework | https://law.upd.edu.ph/wp-content/uploads/2021/06/DOH-Administrative-Order-No-2021-0026.pdf
+
+# --- Manual-download only (Cloudflare-blocked; open in a browser) ---
+# DOH AO 2012-0012 New Classification of Hospitals | https://hfsrb.doh.gov.ph/wp-content/uploads/2021/06/ao2012-0012.pdf

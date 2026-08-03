@@ -1,0 +1,89 @@
+# STATUTES on medical bills, payment, and non-payment.
+#
+# Fetch with:
+#   python fetch/fetch_seeds.py --file fetch/seeds_billing.txt --subdir lawphil
+# URLs verified live 2026-07-29 (each returned real full text, not a stub).
+#
+# Why this bundle exists: the corpus already answered "was the doctor
+# negligent?" but not "who pays, how much, and what happens when the patient
+# doesn't pay?" — the money side of a hospital encounter. Already indexed and
+# deliberately NOT repeated here: RA 8344 + RA 10932 (no deposit in
+# emergencies), RA 9439 (no detention over an unpaid bill), RA 11223 + IRR
+# (UHC), RA 9502 (cheaper medicines), RA 7394 (Consumer Act), the Civil Code
+# (obligations, interest, prescription of collection suits) and the Revised
+# Penal Code (estafa).
+
+# --- PhilHealth: the primary payor and the rules on what it reimburses ---
+National Health Insurance Act of 1995 (RA 7875) - PhilHealth Charter, Benefits and Claims | https://lawphil.net/statutes/repacts/ra1995/ra_7875_1995.html
+RA 9241 - Amending the National Health Insurance Act (Coverage, Premiums, Benefit Payments) | https://lawphil.net/statutes/repacts/ra2004/ra_9241_2004.html
+National Health Insurance Act of 2013 (RA 10606) - Benefit Payments, No Balance Billing, Provider Claims | https://lawphil.net/statutes/repacts/ra2013/ra_10606_2013.html
+
+# --- Mandatory discounts that reduce the bill (and who absorbs them) ---
+Expanded Senior Citizens Act of 2010 (RA 9994) - 20% Discount and VAT Exemption on Medical and Hospital Services | https://lawphil.net/statutes/repacts/ra2010/ra_9994_2010.html
+Senior Citizens Act (RA 7432) - Original Grant of Benefits and Privileges | https://lawphil.net/statutes/repacts/ra1992/ra_7432_1992.html
+Magna Carta for Disabled Persons (RA 7277) - Rights and Privileges of Persons with Disability | https://lawphil.net/statutes/repacts/ra1992/ra_7277_1992.html
+RA 9442 - Amending the Magna Carta for Disabled Persons, 20% Discount on Medicines and Medical Services | https://lawphil.net/statutes/repacts/ra2007/ra_9442_2007.html
+RA 10754 - Expanding the Benefits and Privileges of Persons with Disability, VAT Exemption | https://lawphil.net/statutes/repacts/ra2016/ra_10754_2016.html
+RA 11228 - Mandatory PhilHealth Coverage for All Persons with Disability | https://lawphil.net/statutes/repacts/ra2019/ra_11228_2019.html
+
+# --- Government assistance when the patient cannot pay ---
+Malasakit Centers Act of 2019 (RA 11463) - One-Stop Medical and Financial Assistance for Indigent Patients | https://lawphil.net/statutes/repacts/ra2019/ra_11463_2019.html
+
+# --- Price regulation of what the bill is made of ---
+Price Act (RA 7581) - Price Control of Basic Necessities Including Drugs and Medicines | https://lawphil.net/statutes/repacts/ra1992/ra_7581_1992.html
+Generics Act of 1988 (RA 6675) - Generic Prescribing and Drug Price Information | https://lawphil.net/statutes/repacts/ra1988/ra_6675_1988.html
+
+# --- Private health coverage: HMOs and health insurers as payors ---
+# HMO agreements are treated as non-life insurance contracts (see the
+# jurisprudence bundle), so the Insurance Code supplies the payment,
+# concealment and claims-denial rules that decide who settles the bill.
+Insurance Code as amended (RA 10607) - Insurance Contracts, Concealment, Claims and Payment | https://lawphil.net/statutes/repacts/ra2013/ra_10607_2013.html
+
+# --- Non-payment: the penal exposure of a bounced payment ---
+Batas Pambansa Blg. 22 - Anti-Bouncing Checks Law | https://lawphil.net/statutes/bataspam/bp1979/bp_22_1979.html
+
+# =====================================================================
+# UNPAID BILL OF A DECEASED PATIENT (added 2026-07-29)
+# =====================================================================
+# Death changes who the creditor may pursue and how. The hospital can no
+# longer sue the patient, and it cannot hold the body: RA 9439 (already
+# indexed) requires release of the remains, the death certificate and the
+# interment documents of a deceased patient over an unpaid bill. What is
+# left is a money claim, and it runs against the ESTATE, not the relatives.
+#
+# Already indexed and load-bearing here — the Civil Code (RA 386) supplies:
+#   * Art. 2167  — a person treated while unable to consent (the emergency /
+#                  unconscious admission) is liable for the physician's
+#                  services; that obligation survives into the estate
+#   * Art. 2164-2166 — reimbursement from relatives obliged to give support
+#   * Art. 2244(1)-(3) — funeral expenses and expenses of the last illness
+#                  are PREFERRED credits against the estate
+#   * Arts. 774, 776, 1311 — succession; heirs take the debts with the
+#                  inheritance but are not personally liable beyond its value
+
+# The procedure the claim must follow. Rule 86 is the on-point rule: claims
+# for "expenses for the last sickness of the decedent" must be filed in the
+# estate proceeding within the notice period (6-12 months) or are BARRED
+# FOREVER — the statute of non-claims. Rule 88 governs how allowed debts get
+# paid out of the estate.
+#
+# !! AFTER FETCHING THIS ONE, RUN:  python fetch/split_rules_of_court.py
+# LawPhil serves Rules 72-109 as a single 148k-character page. Indexed whole it
+# made 199 chunks sharing 25 section labels — every rule restarts its own
+# numbering, so "Section 2." meant 27 different things — and carried no citable
+# law. Rule 86 Sec. 2's deadline retrieved as a bare "Section 4." from a
+# law=None document, and the answer denied any deadline existed. The splitter
+# writes one file per rule and deletes the combined page; re-fetching restores
+# it, so re-run the splitter after any re-fetch.
+Rules of Court Part II Special Proceedings (Rules 72 to 109) - Claims Against Estate (Rule 86), Payment of Debts of the Estate (Rule 88) | https://lawphil.net/courts/rules/rc_72-109_proceedings.html
+
+# Who else can be billed: support includes medical attendance (Arts. 194-208),
+# and the absolute community / conjugal partnership answers for the medical
+# expenses of a spouse and the family (Arts. 94 and 121) — the usual basis for
+# billing a surviving spouse. Fetched from the E-Library, not LawPhil.
+Family Code of the Philippines (Executive Order 209) - Support Including Medical Attendance, Liability of the Absolute Community and Conjugal Partnership | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/5/95173
+
+# Release and disposal of the remains: death certificates, burial and
+# cremation permits, and what a hospital or funeral establishment may require
+# before the body is released.
+Code on Sanitation of the Philippines (PD 856) - Chapter XXI, Disposal of Dead Persons | https://lawphil.net/statutes/presdecs/pd1975/pd_856_1975.html
