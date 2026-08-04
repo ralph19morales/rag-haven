@@ -18,7 +18,7 @@ store, and a local LLM. No API keys, no per-question cost.
 
 ---
 
-## Two interfaces
+## Interfaces
 
 **`Haven`** — a web app for non-technical users. Opens with a greeting, offers
 common situations to start from ("The hospital won't release my father's body
@@ -34,6 +34,22 @@ streamlit run app.py
 python cli.py ask "What are the grounds for revoking a physician's certificate of registration?"
 python cli.py chat        # interactive
 python cli.py status      # health check: index size, LLM server, OCR, reranker
+```
+
+**Ops dashboard** — for whoever operates the box, not the end user. LLM
+server / GPU / index health at a glance, a dedicated check that the
+CPU-pinned embedding and reranker models haven't regressed onto the GPU (see
+[Known limitations](#known-limitations) and `HAVEN_VLLM_MIGRATION.md` §9), and
+query-latency metrics once questions have been asked. Refresh is manual (the
+button) — two automatic approaches were tried and dropped, see the module
+docstring in `dashboard.py`. Every query asked via the CLI or Haven logs one
+line to `data/metrics.jsonl` (local only, git-ignored —
+`METRICS_LOG_QUESTIONS=false` to stop logging question text) — a query is
+logged only once its answer has *finished* generating, which can take up to
+a minute (see [Performance expectations](#performance-expectations)).
+
+```bash
+streamlit run dashboard.py --server.port 8502
 ```
 
 ---
@@ -262,13 +278,13 @@ can trust:
 
 | Path | What it is |
 |---|---|
-| `ragmed/` | The engine — config, loaders, OCR, chunking, embeddings, vector store, retrieval, reranking, conversation memory, prompting |
+| `ragmed/` | The engine — config, loaders, OCR, chunking, embeddings, vector store, retrieval, reranking, conversation memory, prompting, query-metrics logging |
 | `fetch/` | Source fetcher, curated seed lists, the Rules-of-Court splitter |
 | `ui/` | The animated hero mark for the web app |
 | `tests/` | 164 regression checks |
-| `cli.py` / `app.py` | Command line / Haven web app |
+| `cli.py` / `app.py` / `dashboard.py` | Command line / Haven web app / ops dashboard |
 | `GUIDE.md` | Full explainer: how it works and what went wrong |
-| `corpus/`, `data/` | Documents and index — both git-ignored, both regenerable |
+| `corpus/`, `data/` | Documents, index, and query-metrics log — all git-ignored; `corpus/`/`data/chroma`/`data/bm25.pkl` are regenerable, `data/metrics.jsonl` is operational history and is not |
 
 ---
 

@@ -7,9 +7,10 @@ when the corpus does not cover the question (rather than inventing law).
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 
-from . import conversation, llm, retriever
+from . import config, conversation, llm, metrics, retriever
 from .retriever import Retrieved
 
 # A trailing "the context/corpus does not provide/mention/... more" hedge that
@@ -224,17 +225,33 @@ def answer(question: str, top_k: int | None = None, stream: bool = False,
     written and finds nothing — and the recent turns are replayed to the model,
     fenced as reference rather than as a source. See ragmed/conversation.py.
     """
+    t0 = time.perf_counter()
     search_query = question
     history_block = ""
     if history:
         search_query = conversation.contextualize(question, history)
         history_block = conversation.format_history(history)
 
-    chunks = retriever.retrieve(search_query, top_k=top_k)
+    debug: dict = {}
+    chunks = retriever.retrieve(search_query, top_k=top_k, debug=debug)
+    retrieval_ms = (time.perf_counter() - t0) * 1000
+
+    def _log(generation_ms: float, error: str | None) -> None:
+        metrics.log_query(
+            question=question if config.METRICS_LOG_QUESTIONS else None,
+            question_len=len(question),
+            num_chunks=len(chunks),
+            hyde_fired=debug.get("hyde", False),
+            retrieval_ms=round(retrieval_ms, 1),
+            generation_ms=round(generation_ms, 1),
+            total_ms=round(retrieval_ms + generation_ms, 1),
+            error=error,
+        )
 
     if not chunks:
         msg = ("The corpus is empty or nothing matched. Ingest documents "
                "first with:  python cli.py ingest")
+        _log(generation_ms=0.0, error="empty_index")
         if stream:
             return (iter([msg]), [])
         return Answer(text=msg, sources=[])
@@ -245,8 +262,25 @@ def answer(question: str, top_k: int | None = None, stream: bool = False,
     prompt = build_prompt(question, chunks, history_block)
 
     if stream:
-        return (_stream_trim(llm.generate(SYSTEM_PROMPT, prompt, stream=True)),
-                chunks)
+        gen_t0 = time.perf_counter()
 
-    text = llm.generate(SYSTEM_PROMPT, prompt, stream=False)
+        def _timed_stream():
+            try:
+                yield from _stream_trim(llm.generate(SYSTEM_PROMPT, prompt, stream=True))
+            except Exception as e:
+                _log(generation_ms=(time.perf_counter() - gen_t0) * 1000,
+                     error=str(e)[:200])
+                raise
+            else:
+                _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=None)
+
+        return (_timed_stream(), chunks)
+
+    gen_t0 = time.perf_counter()
+    try:
+        text = llm.generate(SYSTEM_PROMPT, prompt, stream=False)
+    except Exception as e:
+        _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=str(e)[:200])
+        raise
+    _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=None)
     return Answer(text=trim_trailing_caveat(text), sources=chunks)

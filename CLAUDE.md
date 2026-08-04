@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A fully local RAG system over Philippine medical law (statutes, PRC/DOH issuances, Supreme Court
-decisions). Two interfaces share one engine: `app.py` (Streamlit web UI, "Haven") and `cli.py`
-(`ingest` / `ask` / `chat` / `status`). Full narrative walkthrough: `GUIDE.md`. Migration/ops
-details for the LLM backend: `HAVEN_VLLM_MIGRATION.md`.
+decisions). Three interfaces share one engine: `app.py` (Streamlit web UI, "Haven"), `cli.py`
+(`ingest` / `ask` / `chat` / `status`), and `dashboard.py` (a separate Streamlit ops dashboard, own
+port, for whoever operates the box rather than the end user). Full narrative walkthrough: `GUIDE.md`.
+Migration/ops details for the LLM backend: `HAVEN_VLLM_MIGRATION.md`.
 
 ## Commands
 
@@ -34,6 +35,7 @@ streamlit run app.py
 python cli.py ask "question"
 python cli.py chat
 python cli.py status            # health check: index size, LLM server, OCR, reranker
+streamlit run dashboard.py --server.port 8502   # ops dashboard: health + query metrics
 
 # Tests — no corpus, no LLM, no network required
 python tests/test_retrieval.py            # run a single file
@@ -103,11 +105,35 @@ Two non-obvious sampling requirements in `ragmed/config.py` / `ragmed/llm.py`, b
   standard OpenAI param). Left on, this reasoning model spends the token budget on chain-of-thought
   and can return empty `content`.
 
-If you edit `ragmed/embeddings.py`, `ragmed/rerank.py`, or `ragmed/llm.py` while a long-running
-process (`streamlit run app.py`, `cli.py chat`) already has them imported, restart that process —
-Python doesn't hot-reload already-imported modules, and a traceback printed after your edit will
-still show your fixed source line (tracebacks read source fresh off disk at print time), which can
-look like the fix didn't take when it's actually just a stale process.
+### Query metrics and the ops dashboard
+
+`ragmed/metrics.py` appends one JSON line per answered question to `data/metrics.jsonl`
+(retrieval/generation timings, chunk count, HyDE fired, error) — called from inside
+`rag.answer()`, for both the streaming and non-streaming paths. Logging is best-effort and never
+raises. `dashboard.py` (a separate Streamlit app, own port) reads this file plus live health probes
+(vLLM reachability, GPU VRAM via `nvidia-smi`, the CPU-pinning check above, index size). It has no
+auto-refresh — two automatic approaches (`st.fragment(run_every=...)`, an HTML meta-refresh) were
+tried and dropped; see its module docstring for why. Refresh is a manual button.
+
+### Restart long-running processes after editing `ragmed/` — this bit the project twice
+
+Python does not hot-reload modules a process has already imported. `streamlit run app.py`,
+`streamlit run dashboard.py`, and `cli.py chat` all import from `ragmed/` once at startup; any edit
+to a file under `ragmed/` is invisible to an already-running instance of any of them until it's
+restarted. This has two distinct failure signatures, both observed in this repo:
+
+- **A crash whose traceback looks like it contradicts the fix.** Python reads traceback source
+  lines fresh off disk at *print* time, not from what was actually executed — so a stale process
+  can raise an exception through code that, read on screen, already looks fixed. (Happened with the
+  `device="cpu"` pinning fix below.)
+- **Silent nothing — the more dangerous one.** A new code path (e.g. the metrics logging above)
+  simply never runs, with no error at all, because the running process's copy of the module
+  predates it. (Happened with `metrics.log_query()` — a Haven session left open since before that
+  call was added kept answering questions with the old `rag.py`, correctly and silently.)
+
+Before debugging a change to `ragmed/` that "does nothing" or throws something implausible, check
+`ps -o pid,lstart,cmd -p <pid>` against `stat -c '%y' ragmed/whatever.py` for every process that
+might hold a stale import, before assuming the code is wrong.
 
 ### Configuration
 

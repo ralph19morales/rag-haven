@@ -655,7 +655,8 @@ LLM writes cited answer → show sources</code></pre>
             <tr><td><code>rerank.py</code></td><td>The cross-encoder that re-scores candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands.</td></tr>
             <tr><td><code>conversation.py</code></td><td>Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they cannot be cited as a source.</td></tr>
             <tr><td><code>llm.py</code></td><td>Talks to vLLM over its OpenAI-compatible API; checks the server is up and the configured model is loaded.</td></tr>
-            <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → get the answer. Holds the system prompt.</td></tr>
+            <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → get the answer. Holds the system prompt. Also times retrieval and generation and hands them to <code>metrics.py</code> after every answer.</td></tr>
+            <tr><td><code>metrics.py</code></td><td>Appends one JSON line per answered question to <code>data/metrics.jsonl</code> (timings, chunk count, HyDE fired, error) — read by <code>dashboard.py</code>. Best-effort: a write failure never breaks an answer.</td></tr>
             <tr><td><code>ingest.py</code></td><td>The indexing pipeline that runs Journey A over the whole corpus.</td></tr>
           </tbody>
         </table>
@@ -667,6 +668,7 @@ LLM writes cited answer → show sources</code></pre>
           <tbody>
             <tr><td><code>cli.py</code></td><td>Command line: <code>ingest</code>, <code>ask</code>, <code>chat</code>, <code>status</code>. Your main tool.</td></tr>
             <tr><td><code>app.py</code></td><td>A Streamlit web chat UI — same engine, friendlier face, with expandable citations.</td></tr>
+            <tr><td><code>dashboard.py</code></td><td>A separate Streamlit <strong>ops dashboard</strong> (<code>streamlit run dashboard.py --server.port 8502</code>) — LLM/GPU/index health and query metrics, for whoever operates the box rather than the end user.</td></tr>
             <tr><td><code>fetch/fetch_seeds.py</code></td><td>Downloads documents from a seed list into <code>corpus/_fetched/</code>; robust against flaky gov sites.</td></tr>
             <tr><td><code>fetch/seeds*.txt</code></td><td>Curated source lists: statutes (LawPhil), PRC and DOH issuances, jurisprudence, and the bills/payment/non-payment bundles.</td></tr>
             <tr><td><code>fetch/split_rules_of_court.py</code></td><td><strong>Run after fetching the Rules of Court.</strong> LawPhil serves Rules 72–109 as one 148k-character page; this splits it into one file per rule so each is citable. See §13.</td></tr>
@@ -742,7 +744,10 @@ docker update --restart unless-stopped vllm</code></pre>
 .\.venv\Scripts\python.exe cli.py chat
 
 # Web chat interface (opens in browser)
-.\.venv\Scripts\python.exe -m streamlit run app.py</code></pre>
+.\.venv\Scripts\python.exe -m streamlit run app.py
+
+# Ops dashboard — separate app, separate port; see §14 for what it shows
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py --server.port 8502</code></pre>
       <div class="note warn">
         <span class="tag">Golden rule</span>
         <p>Whenever you add, remove, or change documents in <code>corpus/</code>, run <code>ingest</code> again. The index doesn't update itself.</p>
@@ -871,6 +876,8 @@ docker update --restart unless-stopped vllm</code></pre>
       <p>The vLLM container isn't running, hasn't finished loading (<code>docker logs vllm</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started. Check <code>docker ps</code>, then <code>curl http://localhost:8000/v1/models</code> directly. Then <code>cli.py status</code> should show <code>LLM server: OK</code>.</p>
       <h3><code>torch.OutOfMemoryError: CUDA out of memory</code>, pointing at <code>embeddings.py</code> or <code>rerank.py</code></h3>
       <p>vLLM reserves most of the GPU on purpose, so there's normally under a gigabyte free. Embeddings and the reranker are meant to stay on CPU regardless — see the callout in §10 if this is happening. If you just fixed exactly this and it's <em>still</em> happening: restart whatever process is running the query (<code>streamlit run app.py</code>, <code>cli.py chat</code>). Python doesn't reload code already imported into a running process — and a traceback printed after your edit will still show your fixed source line, because Python reads tracebacks fresh off disk at print time, not from what was actually executed. A traceback that seems to contradict the code in front of you is a sign to check whether the process predates the fix.</p>
+      <h3>I added or changed something in <code>ragmed/</code> and nothing happened — no error, just silence</h3>
+      <p>Same cause as the entry above, minus the crash — which makes it easier to miss. This is exactly what happened building the ops dashboard's query-metrics logging: a Haven session had been open since <em>before</em> the logging call was added to <code>rag.py</code>, so every question it answered kept running the old <code>rag.py</code> with no logging in it — correctly, silently, and with nothing pointing at the real cause. A long-running process only has the version of <code>ragmed/*.py</code> that was on disk when it <em>started</em>. Check <code>ps -o pid,lstart,cmd -p &lt;pid&gt;</code> against <code>stat -c '%y' ragmed/whatever.py</code> for the file(s) you changed; if the process started first, restart it — before debugging the feature itself.</p>
       <h3>The answer says "The provided corpus does not cover this."</h3>
       <p>That's the system being <em>honest</em>, not broken. The retrieved chunks didn't contain the answer. Fix by adding the relevant document and re-ingesting. This is a feature — it's refusing to make things up.</p>
       <h3>The answer is confident but wrong — or it answered only half my question</h3>

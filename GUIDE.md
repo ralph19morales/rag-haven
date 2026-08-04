@@ -544,7 +544,8 @@ and `cli.py`/`app.py` as the *steering wheels*.
 | `rerank.py` | The cross-encoder that re-scores retrieved candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands. |
 | `conversation.py` | Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they can't be cited as a source. |
 | `llm.py` | Talks to vLLM over its OpenAI-compatible API; also checks whether the server is up and the configured model is loaded. |
-| `rag.py` | The conductor: retrieve → build the grounded prompt → get the answer. Holds the all-important system prompt. |
+| `rag.py` | The conductor: retrieve → build the grounded prompt → get the answer. Holds the all-important system prompt. Also times retrieval and generation and hands them to `metrics.py` after every answer. |
+| `metrics.py` | Appends one JSON line per answered question to `data/metrics.jsonl` (timings, chunk count, HyDE fired, error) — read by `dashboard.py`. Logging is best-effort: a write failure never breaks an answer. |
 | `ingest.py` | The indexing pipeline that runs Steps 1–5 of Journey A over the whole corpus. |
 | `__init__.py` | Marks `ragmed` as a Python package (plumbing; nothing to configure). |
 
@@ -553,6 +554,7 @@ and `cli.py`/`app.py` as the *steering wheels*.
 |---|---|
 | `cli.py` | Command-line interface. Subcommands: `ingest`, `ask`, `chat`, `status`. This is your main tool. |
 | `app.py` | A **Streamlit** web chat UI — same engine, friendlier face, with expandable source citations. |
+| `dashboard.py` | A separate **Streamlit** ops dashboard (`streamlit run dashboard.py --server.port 8502`) — LLM/GPU/index health and query metrics, for whoever operates the box rather than the end user. See §11 and §14. |
 
 ### The document-fetching tools — `fetch/`
 | File | Job |
@@ -758,6 +760,9 @@ winget install UB-Mannheim.TesseractOCR
 
 # Launch the web chat interface (opens in your browser)
 .\.venv\Scripts\python.exe -m streamlit run app.py
+
+# Launch the ops dashboard — a separate app, separate port; see §14 for what it shows
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py --server.port 8502
 ```
 
 ### Fetching more documents
@@ -1023,6 +1028,22 @@ because Python reads tracebacks fresh off disk at print time, not from what
 was actually executed. A traceback that looks like it contradicts the code
 you're staring at is a sign to check whether the process predates the fix,
 not to doubt the fix.
+
+**Q: I added/changed something in `ragmed/` and nothing happened — no error,
+just silence (e.g. `dashboard.py`'s Query metrics never gains a new row after
+asking a question in Haven).**
+Same root cause as the entry above, minus the crash — which makes it easier
+to miss. A long-running process (`streamlit run app.py`, `streamlit run
+dashboard.py`, `cli.py chat`) only has the version of `ragmed/*.py` that was
+on disk when it *started*; Python does not hot-reload modules it has already
+imported. If a Haven session has been open since before you added, say, the
+query-metrics logging in `rag.py`, every question it answers runs the old
+`rag.py` with no logging call in it at all — correctly, silently, and with
+nothing to point at the real cause. Check `ps -o pid,lstart,cmd -p <pid>`
+against `stat -c '%y' ragmed/whatever.py` for the file(s) you changed; if the
+process started first, restart it. This is worth checking *before* debugging
+the feature itself — it is the more likely explanation than a logic bug for
+anything RAG-adjacent that "does nothing" rather than errors.
 
 **Q: The answer says "The provided corpus does not cover this."**
 That's the system being *honest*, not broken. It means the retrieved chunks

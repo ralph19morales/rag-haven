@@ -18,7 +18,8 @@ requests>=2.32.0
 httpx>=0.27.0
 
 # --- Interfaces ---
-streamlit>=1.36.0        # web chat UI
+streamlit>=1.36.0        # web chat UI + ops dashboard
+pandas>=2.0.0            # dataframes for the ops dashboard's tables/charts
 rich>=13.7.0             # pretty CLI output
 
 # --- Utilities ---

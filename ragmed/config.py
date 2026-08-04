@@ -192,6 +192,16 @@ LLM_TIMEOUT = _env_int("LLM_TIMEOUT", 180)
 # param — sent via extra_body in ragmed/llm.py.
 LLM_ENABLE_THINKING = _env_bool("LLM_ENABLE_THINKING", False)
 
+# --- Query metrics (for the ops dashboard, dashboard.py) -------------------
+METRICS_PATH = DATA_DIR / "metrics.jsonl"
+METRICS_ENABLED = _env_bool("METRICS_ENABLED", True)
+# The question text is genuinely useful for an ops view (which question was
+# slow / errored), but this app exists to handle people's private medical
+# situations, so logging it is opt-out rather than an unexamined default.
+# Everything still stays on this machine either way — data/ is git-ignored
+# and nothing here is transmitted — this only controls what's on disk.
+METRICS_LOG_QUESTIONS = _env_bool("METRICS_LOG_QUESTIONS", True)
+
 
 def ensure_dirs() -> None:
     """Create the directories the pipeline writes to."""
