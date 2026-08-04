@@ -15,7 +15,7 @@ from .retriever import Retrieved
 
 # A trailing "the context/corpus does not provide/mention/... more" hedge that
 # the model sometimes appends AFTER a perfectly good, cited answer (against the
-# prompt's rule 5). This matches only that trailing sentence — NOT a genuine
+# prompt's rule 6). This matches only that trailing sentence — NOT a genuine
 # full refusal (guarded by _opens_with_refusal + a minimum-answer check) and NOT
 # the "legal information, not legal advice" note (different wording).
 #
@@ -110,6 +110,64 @@ def trim_trailing_caveat(text: str, prior_len: int = 0,
     return out
 
 
+# Passage labels the model sometimes emits AS a citation — "[Context 3]",
+# "(Passage 5)", "PASSAGE 2". They name a block of the prompt, which the reader
+# has never seen, so they are worse than an uncited sentence: they look like a
+# reference and resolve to nothing. Rule 3 forbids them; this removes the ones
+# that get through, because a prompt rule is a request and this is a guarantee.
+#
+# Deliberately narrow. Only the three label words, only when followed by a
+# number, and only bracketed/parenthesised or in the SHOUTING form the prompt
+# itself uses — so ordinary prose ("in this context, 5 years") is untouched.
+_SOURCE_LABEL = re.compile(
+    r"""(?:
+          [\[(]\s*(?:context|passage|source)\s*\#?\s*\d+\s*[\])]   # [Context 3]
+        | \bPASSAGE\s+\d+\b                                        # PASSAGE 3
+      )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+# The commonest shape by far is a run of labels opening a paragraph
+# ("[Context 3] [Context 5] The physician must…"), so that case is handled
+# first and as a unit — including the indentation it would otherwise leave
+# behind. Markdown reads four leading spaces as a code block, so a stray label
+# at a line start could silently turn a paragraph into a grey monospace box.
+_LEADING_LABELS = re.compile(
+    r"^[ \t]*(?:" + _SOURCE_LABEL.pattern + r"[ \t]*)+",
+    re.IGNORECASE | re.VERBOSE | re.MULTILINE,
+)
+# A label in the MIDDLE of a sentence takes its surrounding spaces with it and
+# leaves exactly one, so the words either side do not run together. Repair has
+# to be scoped to the removal site like this: an earlier version collapsed every
+# run of spaces in the answer, which silently un-nested markdown list items
+# anywhere a label had been removed elsewhere in the same chunk.
+_INLINE_LABEL = re.compile(
+    r"[ \t]*(?:" + _SOURCE_LABEL.pattern + r")[ \t]*",
+    re.IGNORECASE | re.VERBOSE,
+)
+_SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([,.;:!?)])")
+
+
+def strip_source_labels(text: str) -> str:
+    """Remove prompt-internal passage labels the model used as citations.
+
+    Only whitespace ADJACENT TO A REMOVED LABEL is touched. Blanket-stripping
+    every line's indentation would have been simpler and wrong: markdown nests
+    list items by leading spaces, and the answers here are frequently lists of
+    obligations, so flattening them would silently restructure the reply."""
+    if not text:
+        return text
+    out = _LEADING_LABELS.sub("", text)
+    out = _INLINE_LABEL.sub(" ", out)
+    if out == text:
+        return text                      # nothing removed, nothing to repair
+    out = _SPACE_BEFORE_PUNCT.sub(r"\1", out)
+    # Per-line rstrip, NOT a strip() of the whole string: this runs on each
+    # streamed chunk, and a chunk's trailing blank line is the paragraph break
+    # that separates it from the next one. Stripping it glued paragraphs
+    # together ("A duty exists.And a second one.").
+    return "\n".join(ln.rstrip() for ln in out.split("\n"))
+
+
 def _stream_trim(token_gen):
     """Stream tokens live but hold back the final paragraph so a trailing
     caveat in it can be trimmed before it is ever shown. Tracks how much real
@@ -123,13 +181,17 @@ def _stream_trim(token_gen):
         buf += tok
         idx = buf.rfind("\n\n")           # emit everything before the last blank line
         if idx != -1:
-            chunk = buf[:idx + 2]
+            # Scrubbing per emitted chunk is safe because chunks are only ever
+            # cut at a blank line and a passage label contains no newline, so a
+            # label can never straddle the boundary.
+            chunk = strip_source_labels(buf[:idx + 2])
             yield chunk
             if len(head) < _HEAD_WINDOW:
                 head += chunk
             emitted += len(chunk.strip())
             buf = buf[idx + 2:]
-    tail = trim_trailing_caveat(buf, prior_len=emitted, head=head + buf)
+    tail = strip_source_labels(
+        trim_trailing_caveat(buf, prior_len=emitted, head=head + buf))
     if tail:
         yield tail
 
@@ -144,16 +206,20 @@ Rules you must follow:
 guess at provisions that are not shown.
 2. Cite the specific law and section for every legal assertion, e.g. \
 "(Republic Act No. 2382, Sec. 24)". Every citation must use an identifier that \
-appears in a [Context N] header line above. Never cite a case, law, or section \
-whose identifier is not in one of those headers — including ones named inside \
-the body of a passage.
-3. Cite Philippine authority only. Philippine decisions in the context often \
+appears on a "Cite as:" line above. Never cite a case, law, or section whose \
+identifier is not on one of those lines — including ones named inside the body \
+of a passage.
+3. The passages are numbered only to keep them apart. That numbering is \
+invisible to the reader, so it can never serve as a citation: never write \
+"PASSAGE 3", "Context 3", or any bare bracketed number in your answer. Cite by \
+law and section, using the "Cite as:" wording, and nothing else.
+4. Cite Philippine authority only. Philippine decisions in the context often \
 quote or discuss foreign rulings and foreign doctrine; that material is \
 persuasive reasoning inside a Philippine ruling, not authority of its own. \
 Attribute the point to the Philippine case or statute in the header, never to \
 the foreign source it quotes. If the corpus shows a doctrine only as quoted \
 foreign material, say that plainly instead of citing it as binding.
-4. If the context does not answer the question, say so plainly and name the \
+5. If the context does not answer the question, say so plainly and name the \
 specific thing THIS question asked about that is missing (the provision, \
 topic, figure, or item). Describe the gap in your own words for the actual \
 question asked — do NOT reuse any fixed or example wording, and never carry \
@@ -161,14 +227,14 @@ over a sentence about a topic the user did not ask about. Never invent a rule, \
 number, deadline, or provision. Use a "not covered" statement ONLY when you \
 genuinely cannot answer; never attach it as a caveat to an answer you were \
 able to give.
-5. When you HAVE answered from the context, stop there. Do not append trailing \
+6. When you HAVE answered from the context, stop there. Do not append trailing \
 disclaimers, notes about what the context "does not provide", or suggestions \
 to "consult the full text".
-6. Do not give personalised legal advice or predict case outcomes. You may \
+7. Do not give personalised legal advice or predict case outcomes. You may \
 explain what the law says. Add a one-line note that this is legal information, \
 not legal advice, when the user seems to be asking about their own situation.
-7. Be precise and concise. Quote key statutory language when it matters.
-8. A CONVERSATION SO FAR block may appear. It is there so you can tell what a \
+8. Be precise and concise. Quote key statutory language when it matters.
+9. A CONVERSATION SO FAR block may appear. It is there so you can tell what a \
 follow-up refers to and avoid repeating yourself. It is NOT a source. Never \
 cite it, never treat anything you said earlier as established law, and never \
 carry a citation forward from an earlier turn — if a provision matters to this \
@@ -183,6 +249,16 @@ class Answer:
 
 
 def _format_context(chunks: list[Retrieved]) -> str:
+    """Lay out the retrieved passages for the prompt.
+
+    The passage label is deliberately NOT bracketed. It used to be
+    "[Context 3]", which looks exactly like a citation in legal writing — and
+    the model treated it as one, opening paragraphs with "[Context 3]
+    [Context 5]" instead of naming the law. Measured on this corpus: 75 stray
+    markers across 12 answers, one answer carrying 65. The reader cannot see
+    these labels at all, so a citation made of them is worse than no citation.
+    A bare "PASSAGE n" separates the blocks without offering the model a
+    citation-shaped token to copy. See rule 2 and the `_SOURCE_LABEL` scrub."""
     blocks = []
     for i, c in enumerate(chunks, 1):
         law = c.metadata.get("law", "")
@@ -191,7 +267,8 @@ def _format_context(chunks: list[Retrieved]) -> str:
         source = c.metadata.get("source", "")
         header_bits = [b for b in (law, section) if b]
         header = " | ".join(header_bits) if header_bits else (title or source)
-        blocks.append(f"[Context {i}] {header}\nSource file: {source}\n{c.text}")
+        blocks.append(f"PASSAGE {i}\nCite as: {header}\n"
+                      f"Source file: {source}\n{c.text}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -283,4 +360,5 @@ def answer(question: str, top_k: int | None = None, stream: bool = False,
         _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=str(e)[:200])
         raise
     _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=None)
-    return Answer(text=trim_trailing_caveat(text), sources=chunks)
+    return Answer(text=strip_source_labels(trim_trailing_caveat(text)),
+                  sources=chunks)

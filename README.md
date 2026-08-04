@@ -107,7 +107,6 @@ docker run -d --name vllm --gpus all --ipc=host \
   --max-num-seqs 2 \
   --enforce-eager \
   --enable-prefix-caching \
-  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3               # see HAVEN_VLLM_MIGRATION.md for flag rationale
@@ -194,23 +193,31 @@ running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (see
 | Weights resident | 19.05 GiB |
 | KV cache available | 2.39 GiB (14,563 tokens) |
 | Max context per request | 8,192 |
-| Generation throughput | ~33 tok/s |
+| Generation throughput | ~19 tok/s |
 
 End-to-end, measured on five representative questions through the full
 pipeline (`data/metrics.jsonl` holds both sides of this):
 
 | | Before | After |
 |---|---|---|
-| Mean time to a complete answer | ~50 s | **~21 s** |
-| Decode throughput | 19.0 tok/s | **33 tok/s** |
+| Mean time to a complete answer | ~50 s | **~28 s** |
+| Decode throughput | 19.0 tok/s | 19.0 tok/s (see note) |
+| Time to first token | 1941 ms | **~620 ms** |
 | Model load, per process | 15.4 s | 5.6 s (and now off the first question) |
 | Retrieval, HyDE question | 14.9 s | 7.4 s |
 
 Where that came from, largest first:
 
-- **N-gram speculative decoding** (`--speculative-config`) — 1.7x on decode.
-  It works this well *because* this is RAG: the answer quotes statutory text
-  that is already in the prompt, so drafted tokens are accepted at a high rate.
+- **Prefix caching** (`--enable-prefix-caching`, silently off before) — the
+  ~480-token system prompt is identical on every request and was being
+  re-prefilled each time. Time-to-first-token 1941 ms → ~620 ms.
+- **N-gram speculative decoding was tried and reverted.** It gave a genuine
+  1.7x (19 → 33 tok/s) and corrupted the answers: fragments already in the
+  prompt were emitted twice — `"…course of treatment" the treatment`, and once
+  a mangled citation, `G.R. No. 210445,0445`. Measured over 15 answers per
+  config: 7 repeated fragments in 4/15 answers with it on, **0 in 0/15 with it
+  off.** In a tool whose entire value is citations you can check, that is not a
+  trade worth making.
 - **HyDE draft length** — the draft was writing to its 200-token cap and being
   truncated mid-sentence. Asking for 2-3 sentences cut it to ~95 tokens and
   halved the cost of every question that triggers it (10.5 s → ~4.8 s).
@@ -230,11 +237,10 @@ Remaining levers:
 | `RERANK_ENABLED=false` | ~2.5 s | Ranking quality |
 
 24GB runs 27B-class dense models only with the vision encoder disabled
-(`--limit-mm-per-prompt`) and eager mode on (`--enforce-eager`). Eager stays
-not for lack of trying: CUDA graphs and the speculative drafter want the same
-~1.4 GiB, and with 19.05 GiB of weights resident, enabling graphs leaves too
-little KV cache for an 8k context and the engine refuses to start. Speculative
-decoding is worth far more than graphs here, so it wins the memory.
+(`--limit-mm-per-prompt`) and eager mode on (`--enforce-eager`). CUDA graphs
+would add ~15%, but with 19.05 GiB of weights resident they leave too little KV
+cache for an 8k context and the engine refuses to start — measured at
+`--gpu-memory-utilization` 0.93, 0.95 and 0.96.
 
 ---
 
@@ -307,7 +313,7 @@ can trust:
 |---|---|
 | `ragmed/` | The engine — config, loaders, OCR, chunking, embeddings, vector store, retrieval, reranking, conversation memory, prompting, query-metrics logging |
 | `fetch/` | Source fetcher, curated seed lists, the Rules-of-Court splitter |
-| `ui/` | The animated hero mark for the web app |
+| `ui/` | Inline SVG/CSS chrome. `hero.py` and `thinking.py` are Haven's hero mark and waiting animation; `hud.py` is the ops dashboard's heads-up display — a deliberately different register for a different audience |
 | `tests/` | 164 regression checks |
 | `cli.py` / `app.py` / `dashboard.py` | Command line / Haven web app / ops dashboard |
 | `GUIDE.md` | Full explainer: how it works and what went wrong |

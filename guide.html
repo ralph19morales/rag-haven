@@ -413,7 +413,7 @@
           <li><a href="#s10"><span class="n">10</span><span>Why each technology</span></a></li>
           <li><a href="#s11"><span class="n">11</span><span>How to use it</span></a></li>
           <li><a href="#s12"><span class="n">12</span><span>Every config knob</span></a></li>
-          <li><a href="#s12b"><span class="n">12b</span><span>Why it's slow</span></a></li>
+          <li><a href="#s12b"><span class="n">12b</span><span>What it costs</span></a></li>
           <li><a href="#s13"><span class="n">13</span><span>The corpus</span></a></li>
           <li><a href="#s14"><span class="n">14</span><span>Troubleshooting &amp; FAQ</span></a></li>
           <li><a href="#s15"><span class="n">15</span><span>How to extend it</span></a></li>
@@ -688,7 +688,7 @@ LLM writes cited answer → show sources</code></pre>
     <section class="doc" id="s10">
       <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why we chose each technology</h2></div>
       <h3>Why "fully local / offline"?</h3>
-      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: a GPU with meaningful VRAM, a Docker install, and Tesseract for OCR. On a 24GB consumer card generation runs at ~14 tok/s — single-user readable speed, not interactive-fast. Embeddings and reranking still run on CPU regardless of GPU size (see the callout below). For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
+      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: a GPU with meaningful VRAM, a Docker install, and Tesseract for OCR. On a 24GB consumer card generation runs at ~19 tok/s, putting a complete answer at roughly 20–30 seconds. Embeddings and reranking still run on CPU regardless of GPU size (see the callout below). For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
       <h3>Why vLLM + Qwen3.6-27B-AWQ?</h3>
       <p>vLLM is what a production/appliance deployment of this kind of system actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime that transfers unchanged to client hardware. <code>Qwen3.6-27B-AWQ</code> is a 4-bit-quantized 27B model; AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the real resident footprint on a 24GB card is <strong>19.05&nbsp;GiB</strong> — more than the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number that doesn't transfer to vLLM's AWQ path. Swap the model with one flag (<code>--model</code>) and a matching <code>LLM_MODEL</code> in <code>.env</code>.</p>
       <h3>Why bge-base for embeddings?</h3>
@@ -720,10 +720,11 @@ LLM writes cited answer → show sources</code></pre>
   -p 8000:8000 \
   vllm/vllm-openai:latest \
   --model QuantTrio/Qwen3.6-27B-AWQ \
-  --max-model-len 32768 \
+  --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
   --enforce-eager \
+  --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
@@ -767,7 +768,9 @@ docker update --restart unless-stopped vllm</code></pre>
             <tr><td><code>LLM_MODEL</code></td><td>Which model vLLM is serving — must match its <code>--model</code> flag.</td><td>Qwen3.6-27B-AWQ</td></tr>
             <tr><td><code>LLM_TEMPERATURE</code> / <code>TOP_P</code> / <code>TOP_K</code></td><td>Sampling. <strong>Don't set temperature to 0</strong> — Qwen3-family models loop on repeated tokens under greedy decoding.</td><td>0.7 / 0.95 / 20</td></tr>
             <tr><td><code>LLM_MAX_TOKENS</code></td><td>Caps <em>total</em> generation per answer.</td><td>1024</td></tr>
-            <tr><td><code>LLM_TIMEOUT</code></td><td>Client HTTP timeout (seconds). At ~14 tok/s a full answer can take over a minute.</td><td>180</td></tr>
+            <tr><td><code>LLM_TIMEOUT</code></td><td>Client HTTP timeout (seconds). At ~19 tok/s a long answer takes ~50s, and a typical client default would surface as a false retrieval failure.</td><td>180</td></tr>
+            <tr><td><code>LLM_SEED</code></td><td>Fixed sampling seed for the two calls that feed <em>retrieval</em> — the HyDE draft and the follow-up rewrite — not for the answer. Leaving them sampled makes the retrieved passages themselves random. Negative disables.</td><td>1729</td></tr>
+            <tr><td><code>HF_OFFLINE</code></td><td>Stop sentence-transformers revalidating the already-cached embedder and reranker against huggingface.co on every process start (~10s each time). Set <code>false</code> only to download a model you haven't cached.</td><td>true</td></tr>
             <tr><td><code>LLM_ENABLE_THINKING</code></td><td>Let Qwen3.6 reason before answering. Left on, it can burn the token budget on chain-of-thought and return no content.</td><td>false</td></tr>
             <tr><td><code>CHUNK_SIZE</code></td><td>Target characters per chunk. <em>Re-ingest after changing.</em></td><td>1100</td></tr>
             <tr><td><code>CHUNK_OVERLAP</code></td><td>Characters shared between neighbors.</td><td>150</td></tr>
@@ -776,7 +779,7 @@ docker update --restart unless-stopped vllm</code></pre>
             <tr><td><code>DENSE_WEIGHT</code> / <code>LEXICAL_WEIGHT</code></td><td>Balance of semantic vs. keyword search. Raise lexical for exact citations.</td><td>0.6 / 0.4</td></tr>
             <tr><td><code>MAX_CHUNKS_PER_SOURCE</code></td><td>Most chunks one document may take in the top-K, so a landmark case can't fill the context with itself. <code>0</code> disables. Overflow is demoted, not dropped.</td><td>3</td></tr>
             <tr><td><code>CLAUSE_CANDIDATE_K</code> / <code>MIN_CHUNKS_PER_CLAUSE</code></td><td>Per-ask search size, and the slots each ask of a compound question is guaranteed. A floor, not a quota.</td><td>10 / 2</td></tr>
-            <tr><td><code>RERANK_ENABLED</code> / <code>RERANK_MODEL</code></td><td>The cross-encoder that rescores retrieved candidates. Set false to trade ranking quality for ~4s per query; <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> is ~10× smaller.</td><td>true / bge-reranker-base</td></tr>
+            <tr><td><code>RERANK_ENABLED</code> / <code>RERANK_MODEL</code></td><td>The cross-encoder that rescores retrieved candidates. Set false to trade ranking quality for ~2.5s per query; <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> is ~10× smaller.</td><td>true / bge-reranker-base</td></tr>
             <tr><td><code>RERANK_CANDIDATES</code></td><td>How many retrieved chunks get rescored; the tail keeps its fused order behind them.</td><td>30</td></tr>
             <tr><td><code>RERANK_MIN_SPREAD</code></td><td>Ignore the reranking when its scores are too flat to mean anything — a compound question once produced a 0.0004 spread, and sorting it promoted an unrelated case to rank 1.</td><td>0.02</td></tr>
             <tr><td><code>HYDE_MODE</code></td><td>When to draft a hypothetical answer to bridge vocabulary: <code>off</code> / <code>auto</code> / <code>always</code>.</td><td>auto</td></tr>
@@ -802,23 +805,35 @@ docker update --restart unless-stopped vllm</code></pre>
 
     <!-- 12b -->
     <section class="doc" id="s12b">
-      <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">Why it's slow, and what actually helps</h2></div>
-      <p>Worth knowing before judging the system: even on a dedicated GPU, this is <strong>single-user readable speed, not interactive-fast.</strong> Measured on an RTX&nbsp;3090&nbsp;24GB running <code>QuantTrio/Qwen3.6-27B-AWQ</code> under vLLM (full baseline in <code>HAVEN_VLLM_MIGRATION.md</code> §2):</p>
+      <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">What it costs, and what actually helps</h2></div>
+      <p>Worth knowing before judging the system: this is <strong>single-user speed — fine for research, not a chat toy.</strong> A complete answer lands in roughly 20–30 seconds. It used to take about 50, and the gap between those two numbers is instructive, because almost none of it was the model being slow. Measured on an RTX&nbsp;3090&nbsp;24GB running <code>QuantTrio/Qwen3.6-27B-AWQ</code> under vLLM (full baseline in <code>HAVEN_VLLM_MIGRATION.md</code> §2):</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Metric</th><th>Value</th></tr></thead>
           <tbody>
             <tr><td>Weights resident</td><td>19.05&nbsp;GiB</td></tr>
-            <tr><td>KV cache available</td><td>2.39&nbsp;GiB (57,344 tokens)</td></tr>
-            <tr><td>Max context per request</td><td>16,384 (raisable to 32,768)</td></tr>
-            <tr><td>Max concurrency @ 16K context</td><td>~3.5×</td></tr>
-            <tr><td>Generation throughput</td><td>~14 tok/s</td></tr>
+            <tr><td>KV cache available</td><td>2.39&nbsp;GiB (14,563 tokens)</td></tr>
+            <tr><td>Max context per request</td><td>8,192</td></tr>
+            <tr><td>Max concurrency @ 8K context</td><td>~1.78×</td></tr>
+            <tr><td>Generation throughput</td><td>~19 tok/s</td></tr>
             <tr><td>Engine init (container startup)</td><td>~60s, one-time</td></tr>
           </tbody>
         </table>
       </div>
-      <p>A 1024-token answer (<code>LLM_MAX_TOKENS</code>, the default cap) can take over a minute at that rate — exactly why <code>LLM_TIMEOUT</code> defaults to <code>180</code> rather than a typical client's default. Retrieval + reranking is still the cheap part by comparison, running in low single-digit seconds on CPU.</p>
-      <p>Two things haven't been re-measured on this stack and are worth doing yourself before trusting a number here: <strong>prefill rate</strong> (under the old CPU/Ollama setup this was roughly half the wall clock and scaled with <code>TOP_K</code>, not model size — a GPU almost certainly narrows that gap, but it hasn't been confirmed) and <strong>time-to-first-token</strong> as experienced in the UI. Per this guide's own rule below — if you touch a threshold, measure it — the same applies to performance claims.</p>
+      <p>These have now been measured end-to-end rather than estimated, which is what this guide's own rule demands. Time-to-first-token is ~0.8s; a long answer takes ~50s, which is why <code>LLM_TIMEOUT</code> defaults to <code>180</code> rather than a typical client's default.</p>
+      <p>Where the 50 seconds actually went is the interesting part, because three of the four biggest costs had nothing to do with inference:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>What was fixed</th><th>Saved</th><th>Why it was there</th></tr></thead>
+          <tbody>
+            <tr><td>Prefix caching</td><td>TTFT 1941 → 835 ms</td><td>The ~480-token system prompt is identical on every request and was being re-prefilled every time. It had been silently switched off.</td></tr>
+            <tr><td>HyDE draft length</td><td>10.5s → 4.8s</td><td>The draft was writing to its 200-token cap and being truncated mid-sentence — the cap, not the prompt, was setting the length. Asking for 2–3 sentences cut it to ~95 tokens. What HyDE contributes is vocabulary, and that is front-loaded.</td></tr>
+            <tr><td>Hugging Face offline mode</td><td>~10s per process</td><td>sentence-transformers revalidated both already-cached local models against huggingface.co on every start — on a system whose entire premise is running offline.</td></tr>
+            <tr><td>Warm-up and per-process caching</td><td>~6s off the first question</td><td>Model loading was billed to whoever asked first. Retrieval also rebuilt the Chroma client and re-read the 17MB BM25 index on <em>every single query</em>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The general lesson is worth more than the specific fixes: the first profile showed ~19s of "retrieval" on a question that retrieves in about one second. That number was real, but it was measuring model loading, a network round-trip to a service the system is supposed to run without, and an index being rebuilt from disk — not retrieval. <strong>Profile before optimising, and be suspicious when a stage is slow in a way its own logic can't explain.</strong></p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Change</th><th>Effect</th><th>Costs you</th></tr></thead>
@@ -826,10 +841,24 @@ docker update --restart unless-stopped vllm</code></pre>
             <tr><td>More VRAM (32GB+)</td><td>room for a MoE-class model, longer context, more concurrency</td><td>hardware</td></tr>
             <tr><td>Lower <code>TOP_K</code></td><td>less prompt to prefill</td><td>less context per answer</td></tr>
             <tr><td>Lower <code>LLM_MAX_TOKENS</code></td><td>linear</td><td>shorter answers</td></tr>
-            <tr><td><code>RERANK_ENABLED=false</code></td><td>~3s</td><td>ranking quality</td></tr>
-            <tr><td>Remove <code>--enforce-eager</code></td><td>~20% more throughput</td><td>1–2&nbsp;GiB of VRAM, taken straight from the KV pool</td></tr>
+            <tr><td>Shorter answers (system prompt, or <code>LLM_MAX_TOKENS</code>)</td><td>linear — answers run 600–900 tokens, and generation now dominates</td><td>detail in the answer</td></tr>
+            <tr><td><code>RERANK_ENABLED=false</code></td><td>~2.5s</td><td>ranking quality</td></tr>
+            <tr><td>Remove <code>--enforce-eager</code></td><td>~15–20% more throughput</td><td>more VRAM than this card has — see below</td></tr>
           </tbody>
         </table>
+      </div>
+      <div class="note warn">
+        <span class="tag">The optimisation that had to be given back</span>
+        <p>N-gram speculative decoding made generation <strong>1.7× faster</strong> — 19 to 33 tok/s — and it was removed anyway, because it corrupted the answers. It works by drafting tokens copied from the prompt and verifying them in a batch, which suits RAG perfectly, since the answer quotes statutory text sitting right there in the context. But fragments were being emitted <em>twice</em>: <code>"…course of treatment" the treatment</code>, <code>**Whatever grave risks of injury** of injury</code>, and — worst — a case number that came out as <code>G.R. No. 210445,0445</code>.</p>
+        <p>Measured over 15 answers per configuration on identical questions: <strong>7 repeated fragments affecting 4 of 15 answers with it on; 0 affecting 0 of 15 with it off.</strong> A corrupted citation is not a cosmetic defect in a tool whose entire value is that you can go and check what it cited. <strong>A speed-up that damages the output is not a speed-up.</strong> The general form: when you buy performance, measure the thing you were protecting, not just the clock — the failure here was invisible to every latency benchmark and obvious in the first answer a human actually read.</p>
+      </div>
+      <div class="note">
+        <span class="tag">Why <code>--enforce-eager</code> stays</span>
+        <p>CUDA graphs would buy another ~15–20%, and they are not turned on — not from caution, but because they don't fit. With 19.05&nbsp;GiB of weights resident on a 24&nbsp;GiB card, enabling graphs left 0.94&nbsp;GiB of KV cache against the 1.33&nbsp;GiB an 8k context needs, and the engine refused to start; tried at <code>--gpu-memory-utilization</code> 0.93, 0.95 and 0.96. They do fit at <code>--max-model-len 4096</code>, but real prompts run ~1.9k tokens plus 1024 of output plus conversation history, which is too close to the edge to risk mid-conversation.</p>
+      </div>
+      <div class="note warn">
+        <span class="tag">The bug that speed work uncovered</span>
+        <p>Trying to A/B the HyDE draft length produced a result that made no sense: the retrieved chunks kept changing. They were changing because the question was being asked more than once — <strong>the same question, unchanged, returned only 2–3 of the same 10 sources across three runs.</strong> The HyDE draft and the follow-up rewrite are LLM calls, they were sampled like any other, and they decide <em>what gets searched for</em>. So the sampling noise was landing directly on the evidence. Temperature 0 isn't available here (Qwen3 loops on greedy decode), so the fix is a fixed seed on those two calls only — <code>LLM_SEED</code> — leaving the answer itself sampled. Same question, same passages, every time. Worth noticing that this was never a performance bug; it was found only because measuring a performance change requires a stable baseline, and there wasn't one.</p>
       </div>
       <div class="note warn">
         <span class="tag">Don't benchmark against yourself</span>

@@ -39,8 +39,20 @@ def run() -> int:
 
     # --- citations must come from the context headers -----------------------
     r.append(check(
-        "citations are restricted to identifiers in [Context N] headers",
-        "[context n] header" in P and "never cite" in P))
+        'citations are restricted to identifiers on "Cite as:" lines',
+        "cite as:" in P and "never cite" in P))
+
+    # The passage label must not be citation-shaped, and must be forbidden by
+    # name. "[Context 3]" both LOOKED like a legal citation and was written into
+    # the prompt's own wording, so the model copied it: 75 stray markers across
+    # 12 answers, one answer opening every paragraph with "[Context 3]
+    # [Context 5]". Those resolve to nothing for a reader who cannot see the
+    # prompt, which is worse than an uncited sentence.
+    r.append(check("prompt does not itself contain a bracketed passage label",
+                   not re.search(r"\[\s*(?:context|passage|source)\s*n?\d*\s*\]",
+                                 P)))
+    r.append(check("prompt forbids citing by passage number",
+                   "never write" in P and "context 3" in P))
 
     # --- foreign material is not authority ----------------------------------
     r.append(check("prompt tells the model to cite Philippine authority only",

@@ -35,7 +35,7 @@ when sizing client appliances, not vendor estimates.
 | KV pool capacity | **14,563 tokens** (was 57,344 at `--max-model-len 32768`; the drafter and the smaller window changed the block sizing) |
 | Max context per request | 8,192 |
 | Max concurrency @ 8K | **1.78x** |
-| Generation throughput | **~33 tok/s** (19.0 before speculative decoding) |
+| Generation throughput | **~19 tok/s** |
 | Engine init time | ~60 s |
 | vLLM version | 0.26.0 |
 
@@ -91,7 +91,7 @@ strings will need to move to semantic or structural assertions.
 
 ### 3.3 Client timeout
 
-At ~33 tok/s a 1024-token answer still takes ~30 seconds (and it was over 70 s at the pre-speculative-decoding 19 tok/s). A default 30 s HTTP timeout will surface
+At ~19 tok/s a 1024-token answer takes over 50 seconds. A default 30 s HTTP timeout will surface
 as failures that look like retrieval bugs. Set the client timeout to **180 s**.
 
 ### 3.4 `max_tokens` floor
@@ -160,7 +160,6 @@ docker run -d --name vllm --gpus all --ipc=host \
   --max-num-seqs 2 \
   --enforce-eager \
   --enable-prefix-caching \
-  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
@@ -173,7 +172,6 @@ docker update --restart unless-stopped vllm
 | Flag | Reason | Removable? |
 |---|---|---|
 | `--limit-mm-per-prompt '{"image":0,"video":0}'` | 27B is multimodal; the vision encoder reserves VRAM even when unused. Largest single saving. | Only if document-image ingestion is added |
-| `--speculative-config '{"method":"ngram",…}'` | **1.7x decode** (19.0 → ~33 tok/s). RAG answers quote passages already in the prompt, so prompt-lookup drafts are accepted at a high rate. | No — this is the single biggest latency win |
 | `--enable-prefix-caching` | The system prompt (~480 tokens) is identical on every request and was being re-prefilled each time. Was silently `False` before. | No reason to |
 | `--enforce-eager` | Skips CUDA graph capture. Costs ~15–20% throughput — but see below: graphs do not fit alongside the drafter. | Only with more VRAM |
 | `--kv-cache-dtype fp8_e5m2` | Halves KV cache memory. `e4m3` requires Ada+ and calibration scales. | See §6 accuracy caveat |
@@ -239,13 +237,20 @@ drops roughly by half; correctness takes priority in this domain.
 
 ### Throughput ceiling
 
-~33 tok/s with n-gram speculative decoding, up from 19.0 tok/s without it — the single largest
-latency win available on this hardware, and it works this well precisely because RAG answers quote
-passages already present in the prompt.
+~19 tok/s. Two things were tried to raise it; read both before attempting either again.
 
-Removing `--enforce-eager` would recover a further ~15–20%, but the memory it needs comes straight
-out of the KV pool and the drafter has already claimed it; measured attempts at
-`--gpu-memory-utilization` 0.93/0.95/0.96 all failed to start. See §5 for the numbers.
+**N-gram speculative decoding — tried, measured at 1.7x (33 tok/s), and REVERTED because it
+corrupted output.** Fragments already present in the prompt were emitted twice. Over 15 answers per
+config on identical questions: **7 repeated fragments affecting 4/15 answers with it on, 0
+affecting 0/15 with it off.** Observed: `"…course of treatment" the treatment`,
+`**Whatever grave risks of injury** of injury`, and a mangled citation `G.R. No. 210445,0445`.
+For a tool whose value rests on checkable citations, a corrupted G.R. number is a far worse defect
+than a slow answer. If you re-try it (a newer vLLM may fix the underlying accept-path bug), re-run
+that fragment comparison before trusting it.
+
+**Removing `--enforce-eager`** would recover ~15–20%, but CUDA graphs need memory that comes
+straight out of the KV pool; measured attempts at `--gpu-memory-utilization` 0.93/0.95/0.96 all
+failed to start. See §5.
 
 ### Non-determinism
 
@@ -268,7 +273,7 @@ Run the 164-test regression suite after the changes above.
 
 **Expected failures** (informative, not alarming):
 - Exact-string assertions — model changed *and* determinism was lost
-- Latency-sensitive tests — ~33 tok/s vs. Ollama's previous throughput
+- Latency-sensitive tests — ~19 tok/s vs. Ollama's previous throughput
 - Any test that assumed `temperature=0`
 
 **Genuine failures** (investigate):

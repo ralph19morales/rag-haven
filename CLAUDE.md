@@ -24,11 +24,11 @@ docker run -d --name vllm --gpus all --ipc=host \
   vllm/vllm-openai:latest --model QuantTrio/Qwen3.6-27B-AWQ \
   --max-model-len 8192 --gpu-memory-utilization 0.93 --max-num-seqs 2 \
   --enforce-eager --enable-prefix-caching \
-  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 --reasoning-parser qwen3
-# Every flag here is load-bearing for latency — read "Generation speed" below
-# before changing any of them, especially --speculative-config.
+# Every flag here is load-bearing — read "Generation speed" below before
+# changing any of them. In particular, do NOT add --speculative-config: it was
+# tried, it was fast, and it corrupted answers. See below.
 
 # Index the corpus (required before ask/chat/app.py return anything)
 python cli.py ingest            # add & update
@@ -76,7 +76,8 @@ for a self-contained question) → `retriever.retrieve()` runs hybrid search (de
 lexical via BM25, fused by `DENSE_WEIGHT`/`LEXICAL_WEIGHT`) → **in this exact order**:
 `_dedupe()` → `_rerank()` (cross-encoder) → `_cap_per_source()` (no single document fills the
 context) → `_ensure_clause_coverage()` (each *ask* of a compound question gets guaranteed slots) →
-`rag.py` builds the grounded prompt (system rules + labeled context chunks + question) →
+`rag.py` builds the grounded prompt (system rules + labeled context chunks + question; the
+labels are `PASSAGE n` / `Cite as:` and deliberately **not** bracketed — see below) →
 `llm.generate()` streams the answer.
 
 HyDE (`retriever._hypothetical`) is a conditional side-path before retrieval: when the raw
@@ -121,15 +122,23 @@ Measured on this box (RTX 3090, i9-14900KF), real prompts, token counts taken fr
 
 | Config | Decode | TTFT (warm prefix) |
 |---|---|---|
-| Original (`--enforce-eager`, no prefix caching, no spec decode) | 19.0 tok/s | 1941 ms |
-| Current (adds `--enable-prefix-caching` + ngram `--speculative-config`) | **32.4 tok/s** | 623 ms |
+| Original (`--enforce-eager`, no prefix caching) | 19.0 tok/s | 1941 ms |
+| With ngram `--speculative-config` — **REVERTED, see below** | 32.4 tok/s | 623 ms |
+| Current (`--enable-prefix-caching`, no spec decode) | ~19 tok/s | ~620 ms |
 
-- **N-gram speculative decoding is the big one (1.7x)** and it is *specific to RAG*: the answer
-  quotes statutory text that is already in the prompt, so prompt-lookup drafts get accepted at a
-  high rate (~2.9 tokens per streamed chunk). Do not remove it to "simplify" the command.
-- **Beware benchmarking this by counting streamed chunks.** With spec decode several accepted
-  tokens arrive in one chunk, so chunk-counting reports ~16 tok/s and makes the 1.7x win look like
-  a regression. Use `stream_options={"include_usage": True}`.
+- **N-gram speculative decoding was removed after it corrupted answers.** It was genuinely 1.7x,
+  and it broke the output: fragments already present in the prompt got emitted twice. Measured
+  over 15 answers per config on the same questions — **7 repeated fragments in 4/15 answers with
+  it on, 0 in 0/15 with it off.** Real examples: `"…course of treatment" the treatment`,
+  `**Whatever grave risks of injury** of injury`, and a mangled case number `G.R. No. 210445,0445`.
+  A corrupted citation in a legal answer costs more than the speed is worth. **Do not re-enable it
+  without re-running that comparison** (`scratchpad/frag_check.py` in the session notes, or
+  re-derive: count 1-4 word fragments repeated back-to-back).
+- **`--enable-prefix-caching` stays** — it was silently `False` before, is a pure win, and is
+  responsible for the TTFT drop (the ~480-token system prompt is identical on every request).
+- **Beware benchmarking decode by counting streamed chunks.** With spec decode several accepted
+  tokens arrive in one chunk, so chunk-counting reported ~16 tok/s and made the (real, but
+  unusable) 1.7x look like a regression. Use `stream_options={"include_usage": True}`.
 - **`--enforce-eager` stays**, despite the ~15% that CUDA graphs would add. Graphs and the ngram
   drafter compete for the same VRAM: with 19.05 GiB of weights resident, enabling graphs left
   0.94 GiB for KV cache against the 1.33 GiB an 8192-token context needs, and the engine refused to
@@ -163,15 +172,84 @@ Four things are now cached per process; when changing any of them, mind the inva
   Size does not change when a file is re-ingested with the same chunk count, so `ingest` calls
   `retriever.invalidate_bm25()` explicitly as well as deleting the pickle.
 
+### Don't give the model a citation-shaped label
+
+The retrieved passages were once labelled `[Context 1]`, `[Context 2]`… and the system prompt
+told the model its citations had to match an identifier "in a `[Context N]` header line". Both
+halves of that were a trap: the label *looks* like a citation in legal writing, and the prompt
+spelled the token out for the model to copy. It did — measured, **75 stray markers across 12
+answers**, one answer opening every paragraph with `[Context 3] [Context 5]` instead of naming a
+law. Those resolve to nothing for a reader who never sees the prompt, so they are worse than an
+uncited sentence: they look like a reference and lead nowhere.
+
+The fix is in three parts, and all three matter:
+- `_format_context` labels blocks `PASSAGE n` with a separate `Cite as:` line. Unbracketed, so it
+  does not read as a citation.
+- The prompt points at the `Cite as:` line and forbids passage numbers by name (rule 3). Its own
+  wording no longer contains a bracketed label to copy — `tests/test_prompt.py` asserts this.
+- `rag.strip_source_labels()` removes any that still get through, on both the streaming and
+  non-streaming paths. A prompt rule is a request; this is the guarantee.
+
+Two things that function will not do, both learned by breaking them: it does not strip whole-text
+whitespace (it runs per streamed chunk, and a chunk's trailing blank line is the paragraph break —
+stripping it glued paragraphs together), and it does not collapse runs of spaces globally (that
+un-nested markdown list items anywhere a label had been removed in the same chunk).
+
 ### Query metrics and the ops dashboard
 
 `ragmed/metrics.py` appends one JSON line per answered question to `data/metrics.jsonl`
 (retrieval/generation timings, chunk count, HyDE fired, error) — called from inside
 `rag.answer()`, for both the streaming and non-streaming paths. Logging is best-effort and never
 raises. `dashboard.py` (a separate Streamlit app, own port) reads this file plus live health probes
-(vLLM reachability, GPU VRAM via `nvidia-smi`, the CPU-pinning check above, index size). It has no
-auto-refresh — two automatic approaches (`st.fragment(run_every=...)`, an HTML meta-refresh) were
-tried and dropped; see its module docstring for why. Refresh is a manual button.
+(vLLM reachability, GPU VRAM via `nvidia-smi`, the CPU-pinning check above, index size). It is
+presented as a heads-up display (`ui/hud.py`) and deliberately does **not** use the shared
+law-library theme in `.streamlit/config.toml` — Haven is read by a worried patient and stays quiet,
+this is read at a glance by whoever runs the box. The override is safe only because this is its own
+app on its own port. **A state must never be carried by colour, glow, or motion alone**: every
+reading is legible with animation disabled, and the two failures this dashboard exists to catch
+(LLM down, CPU-pinning regression) also print a full plain-text explanation. 
+
+What it checks, and why each category exists:
+- **Liveness** — vLLM reachable, index populated, GPU (`nvidia-smi`), host RAM/load (`/proc`, no
+  new dependency), and engine internals from vLLM's own `/metrics` (KV usage, queue depth, prefix
+  cache hit rate, decode rate derived from inter-token latency).
+- **Regression** — the CPU-pinning check, plus **configuration invariants**: the dashboard reads the
+  live container's flags (`docker inspect vllm`) and asserts what this deployment requires —
+  speculative decoding OFF, prefix caching ON, thinking OFF, temperature > 0, `LLM_SEED >= 0`. A
+  violation turns the overall verdict red and prints why. This exists because the worst regression
+  this project has had passed every liveness probe: latency, GPU and index were all green while
+  speculative decoding duplicated prompt fragments into answers.
+- **Drift** — corpus files newer than the index. Nothing re-indexes automatically, so an
+  un-ingested document is invisible: retrieval never returns it and the answer reads as a coverage
+  gap rather than an operational mistake.
+- **Output** — an on-demand **answer-quality canary**. Asks one known question and inspects the
+  reply for the two defects that have actually shipped (leaked `[Context N]`/`PASSAGE n` labels,
+  back-to-back repeated fragments) plus that it cited something. On demand only: it costs a full
+  generation on the GPU users share.
+
+**When adding a probe, put it in one of those four categories** — and prefer the last two. Liveness
+is the easy kind to add and the least likely to catch the next real failure. Refresh is manual by default with an **opt-in Live toggle** (`st.fragment(run_every=…)`, 5/10/30s). This is the third attempt at auto-refresh; the two earlier ones and why they failed are in the module docstring — do not re-try a meta-refresh, it reloads the visible page and now would also wipe the canary output. Live mode defaults to OFF because this page shares a GPU with real users, and the canary is deliberately outside the fragment so it can never auto-fire.
+
+### Never pass a bare `<svg>` to `st.html` — it is silently deleted
+
+`st.html` sanitises with DOMPurify configured `USE_PROFILES: {html: true}` (verifiable in the
+shipped bundle: `streamlit/static/static/js/Html.*.js`). The HTML profile does **not** include the
+SVG namespace, and `ADD_TAGS` restores only `script` and `style`. So the surrounding `<div>`s and
+`<style>` render, and the drawing is thrown away — leaving a caption floating over empty space.
+
+This is the nastiest failure mode in this repo, because **it is invisible from the server**: no
+exception, correct element tree, correct markup in `AppTest`. Every server-side check passes. It
+shipped three times before anyone noticed — the hero mark, the waiting animation, and the entire
+ops HUD, all rendering as blank space.
+
+Route every graphic through `ui/svg.py::svg_img()`, which inlines it as a `data:` URI `<img>`
+(`img` is in the html profile, `src` is in Streamlit's `ADD_ATTR`, and DOMPurify permits `data:`
+on image tags). Consequence for callers: **the SVG becomes its own document** — page CSS cannot
+reach inside it, so all styles and `@keyframes` must live in a `<style>` element within the
+`<svg>`. Media queries still work there, so `prefers-reduced-motion` is still honoured.
+
+The general lesson, which cost real time here: *"the server emitted it"* is not *"the browser
+rendered it"*. For anything visual, the only real verification is a human looking at the page.
 
 ### Restart long-running processes after editing `ragmed/` — this bit the project twice
 

@@ -14,16 +14,30 @@ Two things are deliberately unmissable rather than tucked away:
   * where each answer came from, in plain language, because an answer nobody
     can check is worth less than no answer.
 
-Colours and type come from .streamlit/config.toml. The only custom markup is
-the animated hero mark in ui/hero.py, which Streamlit has no native equivalent
-for.
+Colours and type come from .streamlit/config.toml — this app honours the
+reader's light/dark preference, unlike dashboard.py which forces its own dark
+ground. Custom markup lives in `ui/`: the hero mark (`hero.py`), the waiting
+animation (`thinking.py`), and the page chrome and source cards (`chrome.py`).
+
+`chrome.py` is a deliberately quiet relative of the ops dashboard's heads-up
+display (`ui/hud.py`). It borrows that screen's structure — corner brackets,
+fading hairline rules, uppercase letterspaced micro-labels for metadata — and
+none of its voltage: no dark ground, no high-chroma accent, no scanlines, no
+glow on text, nothing that rotates. The reason is the audience. The dashboard is
+scanned from across a room to see whether anything is broken; this page is read
+slowly by someone who is worried, and it carries a disclaimer that has to be
+believed. Micro-labels are therefore used ONLY for metadata — never for the
+answer and never for the disclaimer, because a legal caveat set in tracked-out
+capitals reads as decoration and gets skipped.
 """
 from __future__ import annotations
 
 import streamlit as st
 
 from ragmed import config, embeddings, llm, rag, rerank, vectorstore
+from ui import chrome
 from ui.hero import scales_svg
+from ui.thinking import thinking_mark
 
 ASSISTANT = "Haven"
 
@@ -99,11 +113,19 @@ def render_sources(sources: list[dict], expanded: bool = False) -> None:
     retrieval and meaningless to someone asking whether they can take their
     father home — and a number beside a legal citation invites false confidence.
 
-    Rendered ABOVE the answer, always. On this hardware the model spends about a
-    minute reading before it writes a word, and the passages are known the
-    instant retrieval finishes — so they are shown first, giving someone a real
-    thing to read during the wait instead of a spinner. Keeping the position
-    identical live and in history means nothing jumps when the turn completes.
+    Rendered BELOW the answer. This used to be above it, and the reason it was
+    is worth recording because it expired rather than being wrong: generation
+    took about a minute, the passages were known the moment retrieval finished,
+    and putting them first gave someone a real thing to read during the wait.
+    Generation is now several times faster and the wait is held by an animated
+    mark instead (ui/thinking.py), so the answer can sit where a reader expects
+    it and the sources can support it from underneath.
+
+    `expanded` must match between the live turn and the replay from history.
+    Streamlit re-renders the whole conversation after each turn, so an expander
+    that is open live and closed in history visibly collapses the instant the
+    answer completes — which is exactly when the reader is deciding whether to
+    check it.
     """
     if not sources:
         return
@@ -113,13 +135,14 @@ def render_sources(sources: list[dict], expanded: bool = False) -> None:
             "The assistant was only allowed to read these passages. Open the "
             "law itself before you rely on any of it."
         )
-        for i, s in enumerate(sources, 1):
-            with st.container(border=True):
-                title = s["law"] or "Untitled document"
-                st.markdown(f"**{i}. {title}**")
-                if s["section"]:
-                    st.markdown(s["section"])
-                st.caption(s["source"])
+        # One html block for the whole list rather than a widget per source:
+        # the cards are pure presentation, and building them as Streamlit
+        # containers meant a bordered box inside a bordered expander inside a
+        # chat bubble — three nested frames competing for the same edge.
+        st.html(chrome.label(f"retrieved passages · {len(sources)}") + "".join(
+            chrome.source_card(i, s["law"], s["section"], s["source"])
+            for i, s in enumerate(sources, 1)
+        ))
 
 
 # --- State -----------------------------------------------------------------
@@ -129,6 +152,7 @@ if "messages" not in st.session_state:
 ok, msg = llm_status()
 warm_up()
 stroke, accent, faint = theme_colors()
+st.html(chrome.chrome_css(dark=getattr(st.context.theme, "type", "light") == "dark"))
 
 
 # --- Hero ------------------------------------------------------------------
@@ -139,6 +163,7 @@ if not st.session_state.messages:
         "Answers about Philippine medical law, drawn from the law itself.",
         text_alignment="center",
     )
+    st.html(chrome.hero_meta(vectorstore.count(get_collection())))
     st.warning(
         "**Haven does not give legal advice.** It searches the law and quotes "
         "it back to you. It cannot weigh the facts of your situation, and it "
@@ -159,10 +184,17 @@ if not ok:
 
 
 # --- Conversation ----------------------------------------------------------
-for m in st.session_state.messages:
+for turn, m in enumerate(st.session_state.messages):
     with st.chat_message(m["role"]):
+        if m["role"] == "assistant":
+            # Keyed by turn INDEX, not id(m): Streamlit keys must be stable
+            # across reruns, and object ids are recycled — two turns could
+            # collide, or one could change key on every rerun.
+            with st.container(key=f"hv-answer-{turn}"):
+                st.markdown(m["content"])
+        else:
+            st.markdown(m["content"])
         render_sources(m.get("sources", []))
-        st.markdown(m["content"])
         if m["role"] == "assistant":
             st.caption(
                 ":material/info: Information, not legal advice — check the "
@@ -176,10 +208,14 @@ question = st.chat_input("Tell Haven what's happening…")
 if not st.session_state.messages:
     with st.chat_message("assistant"):
         st.markdown(GREETING)
-    st.markdown("##### Or start with a common situation")
-    for i, q in enumerate(COMMON_QUESTIONS):
-        if st.button(q, key=f"common_{i}", width="stretch"):
-            question = q
+    st.html(chrome.label("or start with a common situation"))
+    # Keyed so chrome.py can scope its CSS to these buttons alone — Streamlit
+    # exposes the key as a `.st-key-…` class, which is the supported way to
+    # style a specific widget rather than every button on the page.
+    with st.container(key="hv-situations"):
+        for i, q in enumerate(COMMON_QUESTIONS):
+            if st.button(q, key=f"common_{i}", width="stretch"):
+                question = q
 
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
@@ -197,30 +233,50 @@ if question:
     ]
 
     with st.chat_message("assistant"):
-        with st.spinner("Searching the law…"):
-            gen, chunks = rag.answer(question, top_k=config.TOP_K, stream=True,
-                                     history=history)
+        # One placeholder holds the whole turn: the waiting mark, then the
+        # answer that replaces it. Writing both through `stage` is what makes
+        # the transition a swap rather than a spinner disappearing and text
+        # appearing somewhere else.
+        answer_box = st.container(key="hv-answer-live")
+        stage = answer_box.empty()
+        stage.html(thinking_mark(stroke, accent, faint, "Searching the law…"))
 
-        # `gen` is lazy: retrieval has finished but the model has not started
-        # reading yet, so the passages can go on screen now rather than a
-        # minute from now when the first token arrives.
+        gen, chunks = rag.answer(question, top_k=config.TOP_K, stream=True,
+                                 history=history)
+
+        # `gen` is lazy: retrieval has finished, but the model has not read the
+        # passages yet. That is a second, distinct wait, so the mark keeps
+        # running and says which one we are in rather than freezing on the
+        # first phase.
         sources = [{
             "law": c.metadata.get("law", ""),
             "section": c.metadata.get("section", ""),
             "source": c.metadata.get("source", ""),
         } for c in chunks]
-        render_sources(sources, expanded=True)
-
-        placeholder = st.empty()
         if sources:
-            placeholder.caption(
-                ":material/hourglass_top: Reading these passages and writing "
-                "your answer — this can take a minute on this computer."
-            )
+            stage.html(thinking_mark(
+                stroke, accent, faint,
+                f"Reading {len(sources)} passages and writing your answer…"))
+
         buf = ""
         for token in gen:
             buf += token
-            placeholder.markdown(buf)
+            stage.markdown(buf)      # the first token clears the mark
+
+        # An answer that came back empty would otherwise leave the scales
+        # swinging for ever, since nothing ever overwrites them.
+        if not buf:
+            stage.empty()
+            st.caption(
+                ":material/error: No answer came back. The model may have "
+                "stopped early — try asking again."
+            )
+
+        render_sources(sources)
+        st.caption(
+            ":material/info: Information, not legal advice — check the "
+            "sources above."
+        )
 
     st.session_state.messages.append(
         {"role": "assistant", "content": buf, "sources": sources}

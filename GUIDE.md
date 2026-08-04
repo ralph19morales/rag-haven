@@ -497,6 +497,24 @@ The system assembles the text it will send to the AI. It contains three things:
    source so the model can cite precisely.
 3. **Your question.**
 
+> **Don't hand the model a citation-shaped label.** The chunks used to be
+> labeled `[Context 1]`, `[Context 2]`… and the rulebook told the model its
+> citations had to match an identifier "in a `[Context N]` header line". Both
+> halves were a trap. A bracketed label *looks* like a citation to anything
+> trained on legal or academic writing, and spelling the token out in the rules
+> handed the model a template to copy. It copied it: **75 stray markers across
+> 12 answers**, with one answer opening every paragraph `[Context 3] [Context 5]`
+> instead of naming a law. To the reader — who never sees the prompt — those are
+> references that resolve to nothing, which is worse than no citation at all,
+> because they *look* checkable.
+>
+> The fix is three-layered, and the third layer is the point: the labels became
+> unbracketed (`PASSAGE 1` with a separate `Cite as:` line), the rules now name
+> the offence explicitly, and `strip_source_labels()` removes any that still
+> escape. **A prompt rule is a request; only code is a guarantee.** Anything a
+> user must never see needs an enforcement layer outside the model, however
+> firmly the prompt asks.
+
 ### Step 5 — The LLM writes the answer (`llm.py` → vLLM)
 The prompt goes to **vLLM**, which serves **Qwen3.6-27B-AWQ** locally over an
 OpenAI-compatible API. The model reads the passages and streams back an answer,
@@ -601,9 +619,8 @@ later.
 A deliberate trade. Benefits: **privacy** (documents never leave the machine),
 **no API keys**, **no per-question cost**, and it works without internet once set
 up. Cost: a GPU with meaningful VRAM (vLLM), a Docker install, and Tesseract for
-OCR. On a 24GB consumer card, generation runs at ~33 tok/s with n-gram
-speculative decoding enabled (19 tok/s without it) — a complete answer lands in
-roughly 15-25 seconds. Embeddings and reranking still run on
+OCR. On a 24GB consumer card, generation runs at ~19 tok/s — a complete answer
+lands in roughly 20-30 seconds. Embeddings and reranking still run on
 CPU regardless of GPU size (see below — they're small enough that it isn't
 worth the VRAM). For legal research over sensitive or proprietary documents,
 privacy plus zero marginal cost is usually the right call — but if you are
@@ -730,7 +747,6 @@ docker run -d --name vllm --gpus all --ipc=host \
   --max-num-seqs 2 \
   --enforce-eager \
   --enable-prefix-caching \
-  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
@@ -802,8 +818,8 @@ without editing code, copy `.env.example` to `.env` and set it there.
   instinct for factual RAG output, greedy decoding makes Qwen3-family models
   loop on repeated tokens.
 - `LLM_MAX_TOKENS` — caps *total* generation per answer. Default `1024`.
-- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. Even at
-  ~33 tok/s a long answer takes ~30s, and the default `openai` client timeout
+- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. At ~19 tok/s
+  a long answer takes ~50s, and the default `openai` client timeout
   (far shorter) would surface as a false retrieval failure.
 - `LLM_SEED` — fixed sampling seed for the two calls that feed *retrieval* (the
   HyDE draft and the follow-up rewrite), not for the answer. Without it those
@@ -890,7 +906,7 @@ Worth knowing before you judge the system: even on a dedicated GPU, this is
 | KV cache available | 2.39 GiB (14,563 tokens) |
 | Max context per request | 8,192 |
 | Max concurrency @ 8K context | ~1.78× |
-| Generation throughput | ~33 tok/s (19.0 without speculative decoding) |
+| Generation throughput | ~19 tok/s |
 | Engine init (container startup) | ~60s, one-time |
 
 A 1024-token answer (`LLM_MAX_TOKENS`, the default cap) can take over a

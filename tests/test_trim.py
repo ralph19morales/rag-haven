@@ -10,7 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ragmed.rag import _stream_trim, trim_trailing_caveat  # noqa: E402
+from ragmed.rag import (_stream_trim, strip_source_labels,  # noqa: E402
+                        trim_trailing_caveat)
 
 # A real refusal the system produced: it opens by naming the gap, cites what it
 # DID find, then closes by restating the gap. Nothing here may be trimmed.
@@ -121,6 +122,52 @@ def run() -> int:
     results.append(check(
         "a substantive final sentence containing 'not cover' is preserved",
         trim_trailing_caveat(cited), cited))
+
+    # --- passage labels emitted AS citations --------------------------------
+    # Observed in a real answer: every paragraph opened "[Context 3]
+    # [Context 5]" instead of naming a law. Those labels name blocks of the
+    # PROMPT, which the reader never sees, so they read as references that
+    # resolve to nothing. The prompt now forbids them and the context blocks are
+    # no longer bracketed; this is the guarantee behind that request.
+    results.append(check(
+        "leading passage labels are stripped",
+        strip_source_labels(
+            "[Context 3] [Context 5] The physician must disclose risks."),
+        "The physician must disclose risks."))
+    results.append(check(
+        "a label mid-sentence leaves no double space",
+        strip_source_labels("The duty [Context 2] is to disclose."),
+        "The duty is to disclose."))
+    results.append(check(
+        "a parenthesised label takes its space before the full stop",
+        strip_source_labels("This is required (Context 2)."),
+        "This is required."))
+    results.append(check(
+        "the disclaimer survives having a label peeled off it",
+        strip_source_labels(
+            "[Context 6] This is legal information, not legal advice."),
+        "This is legal information, not legal advice."))
+
+    # Must NOT touch real citations, ordinary prose, or markdown structure.
+    keep = "The ground is in (Republic Act No. 2382, Sec. 24) and G.R. No. 165279."
+    results.append(check("real citations are untouched",
+                         strip_source_labels(keep), keep))
+    prose = "In this context, 5 years is the prescriptive period."
+    results.append(check("'context' in ordinary prose is untouched",
+                         strip_source_labels(prose), prose))
+    # Regression: an earlier version collapsed every run of spaces in the text,
+    # which un-nested list items anywhere a label was removed in the same chunk.
+    nested = "[Context 1] The duties are:\n\n- disclose\n    - material risks"
+    results.append(check(
+        "nested list indentation survives a label removal",
+        strip_source_labels(nested),
+        "The duties are:\n\n- disclose\n    - material risks"))
+
+    results.append(check("streaming strips labels too",
+                         "".join(_stream_trim(iter([
+                             "[Context 2] A duty exists.\n\n",
+                             "[Context 4] And a second one."]))),
+                         "A duty exists.\n\nAnd a second one."))
 
     failed = results.count(False)
     print(f"\n{len(results) - failed}/{len(results)} passed")
