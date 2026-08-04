@@ -138,7 +138,7 @@ this picture in mind; every component below maps onto it.
 | Cataloguing the library ahead of time | **Ingestion** (`ragmed/ingest.py`) |
 | The card catalog / search index | **Vector store + BM25 index** (`vectorstore.py`, `retriever.py`) |
 | The librarian who fetches pages | **Retriever** (`ragmed/retriever.py`) |
-| The research assistant who writes the answer | **LLM via Ollama** (`ragmed/llm.py`, `rag.py`) |
+| The research assistant who writes the answer | **LLM via vLLM** (`ragmed/llm.py`, `rag.py`) |
 | The front desk where questions come in | **CLI / Web UI** (`cli.py`, `app.py`) |
 
 ---
@@ -184,9 +184,13 @@ Don't memorize these — just skim now and refer back. Each is expanded later.
   bi-encoder to find ~30 candidates and a cross-encoder to order them — the
   standard **retrieve-then-rerank** pattern.
 - **LLM (Large Language Model)** — the AI that writes the final answer. Yours is
-  **qwen2.5:7b-instruct**, run locally by **Ollama**.
-- **Ollama** — a free program that runs LLMs on your own computer, like a local
-  engine the rest of the system talks to.
+  **Qwen3.6-27B-AWQ**, served locally by **vLLM**.
+- **vLLM** — a high-throughput local inference server that serves LLMs over an
+  OpenAI-compatible API (the same request shape as `api.openai.com`, just
+  pointed at `localhost`). It's the engine a production appliance would ship
+  with, so running against it locally rehearses the real deployment path
+  (continuous batching, PagedAttention, a containerised CUDA runtime) rather
+  than standing in with something simpler.
 - **Prompt** — the full block of text we send the LLM: your question plus the
   retrieved passages plus instructions ("answer only from this, cite sections").
 - **Grounding** — forcing the AI to answer strictly from provided sources.
@@ -231,7 +235,7 @@ Command: `python cli.py ask "..."` (or the web UI)
 > **Why separate them?** Reading and embedding documents is slow and only needs
 > to happen when documents change. Answering must be fast and happen on demand.
 > Splitting the work means every question reuses the expensive indexing you did
-> once. The index described here holds **7,935 chunks from 154 documents**.
+> once. The index described here holds **7,934 chunks from 154 documents**.
 
 ---
 
@@ -493,11 +497,22 @@ The system assembles the text it will send to the AI. It contains three things:
    source so the model can cite precisely.
 3. **Your question.**
 
-### Step 5 — The LLM writes the answer (`llm.py` → Ollama)
-The prompt goes to **Ollama**, which runs **qwen2.5:7b-instruct** locally. The
-model reads the passages and streams back an answer, token by token, grounded in
-and citing the supplied sections. Temperature is set low (0.1) to keep it
-factual rather than creative.
+### Step 5 — The LLM writes the answer (`llm.py` → vLLM)
+The prompt goes to **vLLM**, which serves **Qwen3.6-27B-AWQ** locally over an
+OpenAI-compatible API. The model reads the passages and streams back an answer,
+token by token, grounded in and citing the supplied sections.
+
+Two settings here are less obvious than they look. Sampling is **not** greedy
+(`temperature=0.7`, `top_p=0.95`, `top_k=20`): Qwen3-family models loop on
+repeated tokens under greedy decoding, so "turn the randomness off for a more
+factual answer" — the usual instinct for grounded RAG — actually breaks
+generation. And **thinking mode is explicitly disabled**
+(`enable_thinking: False`, sent via `extra_body` since it isn't a standard
+OpenAI parameter): Qwen3.6 is a reasoning model, and left on it burns the
+token budget on chain-of-thought before writing an answer — observed directly
+during setup, where a two-sentence question spent all 200 tokens reasoning and
+returned no content at all. Since the answer is already grounded in retrieved,
+reranked passages, extended reasoning adds latency without adding accuracy.
 
 ### Step 6 — Show the answer + sources (`cli.py` / `app.py`)
 You get the written answer **plus a list of the source chunks** it drew from
@@ -528,7 +543,7 @@ and `cli.py`/`app.py` as the *steering wheels*.
 | `retriever.py` | The hybrid search brain: dense + BM25, then fuse, rerank, cap, reserve per-ask slots, and rank. |
 | `rerank.py` | The cross-encoder that re-scores retrieved candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands. |
 | `conversation.py` | Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they can't be cited as a source. |
-| `llm.py` | Talks to Ollama; also checks whether Ollama is running and the model is available. |
+| `llm.py` | Talks to vLLM over its OpenAI-compatible API; also checks whether the server is up and the configured model is loaded. |
 | `rag.py` | The conductor: retrieve → build the grounded prompt → get the answer. Holds the all-important system prompt. |
 | `ingest.py` | The indexing pipeline that runs Steps 1–5 of Journey A over the whole corpus. |
 | `__init__.py` | Marks `ragmed` as a Python package (plumbing; nothing to configure). |
@@ -583,23 +598,46 @@ later.
 ### Why "fully local / offline"?
 A deliberate trade. Benefits: **privacy** (documents never leave the machine),
 **no API keys**, **no per-question cost**, and it works without internet once set
-up. Cost: two installs (Ollama, Tesseract), and answers run on CPU, which is
-slower than a hosted model. For legal research over sensitive or proprietary
-documents, privacy plus zero marginal cost is usually the right call — but if
-you are indexing public documents at high volume, a cloud backend is the
-reasonable choice, and the engine is written to swap.
+up. Cost: a GPU with meaningful VRAM (vLLM), a Docker install, and Tesseract for
+OCR. On a 24GB consumer card, generation runs at ~14 tok/s — single-user
+readable speed, not interactive-fast. Embeddings and reranking still run on
+CPU regardless of GPU size (see below — they're small enough that it isn't
+worth the VRAM). For legal research over sensitive or proprietary documents,
+privacy plus zero marginal cost is usually the right call — but if you are
+indexing public documents at high volume, a cloud backend is the reasonable
+choice, and the engine is written to swap.
 
-### Why Ollama + qwen2.5:7b-instruct for the LLM?
-**Ollama** is the simplest way to run an LLM locally — install it, `ollama pull`
-a model, done. **qwen2.5:7b-instruct** is a 7-billion-parameter model that's
-strong at following instructions and citing sources, and it runs comfortably on
-a machine with ~16 GB of RAM to spare. Swap it for `llama3.1:8b` or anything
-else Ollama hosts by changing one setting.
+### Why vLLM + Qwen3.6-27B-AWQ for the LLM?
+**vLLM** is what a production/appliance deployment of this kind of system
+actually ships with, so developing against it — rather than a simpler local
+stand-in — rehearses the real serving path: continuous batching,
+PagedAttention, a containerised CUDA runtime that transfers unchanged to
+client hardware. **Qwen3.6-27B-AWQ** is a 4-bit-quantized 27B model; AWQ
+leaves embeddings, `lm_head`, layernorms and the vision encoder in FP16, so
+the real resident footprint on a 24GB card is **19.05 GiB** — noticeably more
+than the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp
+number and doesn't transfer to vLLM's AWQ path. Swap the model with one flag
+(`--model` in the `docker run` command) and matching `LLM_MODEL` in `.env`;
+sizing math for a different model class is in `HAVEN_VLLM_MIGRATION.md` §6.
 
 ### Why bge-base for embeddings?
 `BAAI/bge-base-en-v1.5` is a well-regarded open embedding model with a great
 quality-to-speed balance on CPU. "Base" is the middle size; you can drop to
 `bge-small` (faster) or `bge-large` (more accurate) by changing `EMBED_MODEL`.
+
+> **Why CPU, specifically, and why it matters now.** Embeddings and the
+> cross-encoder reranker (`ragmed/embeddings.py`, `ragmed/rerank.py`) are both
+> explicitly pinned to `device="cpu"` in code, not just left to whatever
+> PyTorch picks by default. This didn't matter under Ollama, which ran on CPU
+> too — but vLLM claims most of the GPU by design
+> (`--gpu-memory-utilization 0.93`, leaving under a gigabyte free), so if
+> either model auto-detects CUDA and tries to load there, it hits an
+> out-of-memory crash mid-query instead of gracefully falling back. This
+> actually shipped once: `embeddings.py`'s offline-fallback path and
+> `rerank.py`'s loader both omitted `device="cpu"`, so a Hugging Face Hub
+> hiccup (or, for the reranker, every load) sent them straight into the wall
+> vLLM had already built. See the troubleshooting entry below if you see a
+> `torch.OutOfMemoryError` pointing at `embeddings.py` or `rerank.py`.
 
 ### Why Chroma for the vector store?
 Chroma is a local, persistent, zero-configuration vector database. It just writes
@@ -639,18 +677,18 @@ macOS or Linux that is `./.venv/bin/python`.
 This is worth being precise about, because "runs locally" is easy to misread as
 "never needs the internet".
 
-**Setup needs the internet once**, to bring roughly 9.5 GB onto the machine:
+**Setup needs the internet once**, to bring roughly 21.5 GB onto the machine:
 
 | What | Size | Where it lands |
 |------|------|----------------|
 | Python packages (PyPI) | ~2 GB | `.venv\` |
 | Embedding model `BAAI/bge-base-en-v1.5` | 439 MB | `%USERPROFILE%\.cache\huggingface\hub` |
-| LLM `qwen2.5:14b-instruct` (Ollama pull) | 9.0 GB | Ollama's model store |
-| Tesseract OCR (optional, scanned PDFs only) | ~60 MB | `C:\Program Files\Tesseract-OCR` |
+| LLM `QuantTrio/Qwen3.6-27B-AWQ` (pulled by the vLLM container) | ~19 GiB | same Hugging Face cache, mounted into the container |
+| Tesseract OCR (optional, scanned PDFs only) | ~60 MB | `C:\Program Files\Tesseract-OCR` (or `apt install tesseract-ocr` on Linux) |
 | The corpus itself (LawPhil / SC E-Library) | 36 MB | `corpus\` |
 
 **After that, answering is fully offline.** Nothing in the query path leaves the
-machine: the LLM is Ollama on `localhost:11434`, the vector store is Chroma on
+machine: the LLM is vLLM on `localhost:8000`, the vector store is Chroma on
 disk (`data\chroma`, telemetry explicitly disabled), the BM25 index is a local
 pickle, and the embedding model is read from the cache above. Verified by
 running a full query with all outbound HTTP blackholed — only `localhost`
@@ -659,20 +697,43 @@ reachable — and getting a complete, correctly cited answer.
 One wrinkle that had to be fixed: `sentence-transformers` contacts
 huggingface.co on load *even when the model is already cached*, so a DNS hiccup
 used to crash a live query. `ragmed/embeddings.py` now falls back to loading the
-cached snapshot directly from disk (see `tests/test_offline_embeddings.py`).
+cached snapshot directly from disk (see `tests/test_offline_embeddings.py`) —
+and that fallback, like the primary load, is pinned to `device="cpu"` so it
+can't collide with vLLM for GPU memory (see the callout in §10).
 
 To move this to a machine that will never have internet, copy `.venv\`, the
-Hugging Face cache folder, the Ollama model store, and the project directory.
+Hugging Face cache folder (it now holds both the embedding and LLM weights),
+and the project directory — plus the `vllm/vllm-openai` Docker image, pulled
+separately.
 
 ### One-time setup
 ```powershell
 # 1. Python libraries
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
 
-# 2. Ollama — download from https://ollama.com/download, then pull the model
-#    named in .env (LLM_MODEL). Retry if it fails: the pull resumes.
-ollama pull qwen2.5:14b-instruct
+```bash
+# 2. vLLM — needs Docker + an NVIDIA GPU. Pulls the model (~19 GiB) on first
+#    run; the flags matter (see HAVEN_VLLM_MIGRATION.md §5 for why each one
+#    is there — most claw back VRAM vLLM would otherwise waste on unused
+#    multimodal support).
+docker run -d --name vllm --gpus all --ipc=host \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -p 8000:8000 \
+  vllm/vllm-openai:latest \
+  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.93 \
+  --max-num-seqs 2 \
+  --enforce-eager \
+  --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --kv-cache-dtype fp8_e5m2 \
+  --reasoning-parser qwen3
 
+docker update --restart unless-stopped vllm   # survives a reboot
+```
+
+```powershell
 # 3. Tesseract for OCR — only needed for scanned PDFs
 winget install UB-Mannheim.TesseractOCR
 
@@ -682,7 +743,7 @@ winget install UB-Mannheim.TesseractOCR
 
 ### Everyday commands
 ```powershell
-# Check the system's health (index size, is Ollama up, is OCR ready)
+# Check the system's health (index size, is vLLM up, is OCR ready)
 .\.venv\Scripts\python.exe cli.py status
 
 # Build / refresh the index after adding documents
@@ -723,12 +784,22 @@ without editing code, copy `.env.example` to `.env` and set it there.
   Alternatives: `bge-small` (faster), `bge-large` (better). *Changing this
   requires a full `ingest --reset`* because old and new embeddings aren't
   comparable.
-- `LLM_MODEL` — which Ollama model writes answers. Default
-  `qwen2.5:7b-instruct`.
-- `LLM_TEMPERATURE` — creativity dial (0 = strict/factual, 1 = loose). Default
-  `0.1` — you want factual here.
-- `LLM_NUM_CTX` — how much text (in tokens) the model can consider at once.
-  Default `8192`.
+- `LLM_BASE_URL` — where vLLM's OpenAI-compatible API is listening. Default
+  `http://localhost:8000/v1`.
+- `LLM_MODEL` — which model vLLM is serving. Default
+  `QuantTrio/Qwen3.6-27B-AWQ`. Must match the `--model` the container was
+  started with.
+- `LLM_TEMPERATURE` / `LLM_TOP_P` / `LLM_TOP_K` — sampling. Defaults `0.7` /
+  `0.95` / `20`. **Don't set temperature to 0** — despite being the usual
+  instinct for factual RAG output, greedy decoding makes Qwen3-family models
+  loop on repeated tokens.
+- `LLM_MAX_TOKENS` — caps *total* generation per answer. Default `1024`.
+- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. At ~14 tok/s
+  a full answer can take over a minute; the default `openai` client timeout
+  (far shorter) would surface as a false retrieval failure.
+- `LLM_ENABLE_THINKING` — whether Qwen3.6 is allowed to reason before
+  answering. Default `false`. Left on, it spends `LLM_MAX_TOKENS` on
+  chain-of-thought and can return no content at all — see §8, Step 5.
 
 ### Chunking (affects the index; re-ingest after changing)
 - `CHUNK_SIZE` — target characters per chunk. Default `1100`.
@@ -767,9 +838,6 @@ without editing code, copy `.env.example` to `.env` and set it there.
 - `HISTORY_REWRITE` — rewrite a dependent follow-up into a standalone search
   query before retrieving. Costs one short extra LLM call on follow-ups only;
   set `false` to trade follow-up accuracy for speed.
-- `OLLAMA_KEEP_ALIVE` — how long Ollama keeps the model in memory. Default
-  `30m`. Its own default is 5 minutes, so reading an answer before asking again
-  costs a full multi-GB reload. Costs idle RAM only.
 - `CLAUSE_CANDIDATE_K` / `MIN_CHUNKS_PER_CLAUSE` — per-ask search size, and the
   slots each ask of a compound question is guaranteed. Defaults `10` / `2`; set
   the latter to `0` to rank purely by score.
@@ -795,51 +863,67 @@ without editing code, copy `.env.example` to `.env` and set it there.
 
 ## 12b. Why it's slow, and what actually helps
 
-Worth knowing before you judge the system: on a machine with **no GPU**, a 14B
-model spends most of its time on two things, and only one of them is what people
-assume.
+Worth knowing before you judge the system: even on a dedicated GPU, this is
+**single-user readable speed, not interactive-fast.** Measured on an RTX 3090
+24GB running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (full baseline in
+`HAVEN_VLLM_MIGRATION.md` §2):
 
-| Phase | Rate | Per question |
-|---|---|---|
-| Retrieval + reranking | — | ~4s |
-| **Prefill** — *reading* the prompt | ~38 tok/s | **~58s** |
-| **Generation** — *writing* the answer | ~7.8 tok/s | **~51s** |
+| Metric | Value |
+|---|---|
+| Weights resident | 19.05 GiB |
+| KV cache available | 2.39 GiB (57,344 tokens) |
+| Max context per request | 16,384 (raisable to 32,768) |
+| Max concurrency @ 16K context | ~3.5× |
+| Generation throughput | ~14 tok/s |
+| Engine init (container startup) | ~60s, one-time |
 
-**Prefill is about half the wall clock, and it scales with `TOP_K`, not with
-model size.** Dropping `TOP_K` from 10 to 6 removed ~1,100 tokens of prompt and
-cut ~30 seconds per question with no model change at all. That's the lever most
-people skip while arguing about parameter counts.
+A 1024-token answer (`LLM_MAX_TOKENS`, the default cap) can take over a
+minute at that rate — which is exactly why `LLM_TIMEOUT` defaults to `180`
+rather than a typical HTTP client's default. Retrieval + reranking is still
+the cheap part of a query by comparison, running in low single-digit seconds
+on CPU.
+
+Two things haven't been measured yet on this stack and are worth doing
+yourself before trusting a number here: **prefill rate** (how fast the model
+reads the retrieved-passages prompt before it starts writing — under the old
+CPU/Ollama setup this was roughly half the wall clock and scaled with
+`TOP_K`, not model size; a GPU almost certainly narrows that gap but it
+hasn't been re-measured), and **time-to-first-token** as experienced in the
+UI. Per this guide's own rule in §15 — if you touch a threshold, measure it —
+the same applies to performance claims: don't take the table above as the
+last word on *your* hardware.
 
 Levers, roughly in order of value:
 
 | Change | Effect | Costs you |
 |---|---|---|
-| `OLLAMA_KEEP_ALIVE` | avoids a 9 GB reload after idle | idle RAM — free |
-| Show sources before generating | ~16s off the *perceived* wait | nothing |
-| Lower `TOP_K` | ~7s per passage dropped | less context per answer |
-| Cap answer length | linear | shorter answers |
-| Smaller model | ~2× per halving | instruction adherence |
-| A GPU | 10–50× | hardware |
-
-### Perceived speed is a different problem — and cheaper to fix
-The generator is **lazy**: retrieval finishes and hands back the passages before
-the model has read a single token. So Haven shows you the laws it found at
-**~7s**, while the answer itself doesn't start until **~23s**. You get something
-real to read 16 seconds earlier, at no cost to the answer.
+| More VRAM (32GB+) | room for a MoE-class model, longer context, more concurrency | hardware |
+| Lower `TOP_K` | less prompt to prefill | less context per answer |
+| Lower `LLM_MAX_TOKENS` | linear | shorter answers |
+| `RERANK_ENABLED=false` | ~3s | ranking quality |
+| Remove `--enforce-eager` (see §5 flags) | ~20% more throughput | 1–2 GiB of VRAM, taken straight from the KV pool |
 
 ### Don't benchmark against yourself
-The most common bad measurement, and one made while writing this guide: timing a
-query while the app is still running. A Streamlit process holding 1.5 GB of
-models, twelve Python processes and Ollama all competing inflated a
-time-to-first-token from **23s to 114s** — and produced the confident, wrong
-conclusion that recent changes had made things worse. Stop the app, check what
-else holds models, warm what you aren't measuring, then time it.
+The failure mode that actually bit this project, not a hypothetical one:
+`ragmed/embeddings.py` and `ragmed/rerank.py` both load small models that are
+meant to run on CPU regardless of what GPU is available — but one code path
+in each omitted the explicit `device="cpu"` pin, so they auto-detected CUDA
+instead. That's invisible on a machine with GPU headroom to spare. It is not
+invisible once vLLM is running, because `--gpu-memory-utilization 0.93`
+leaves well under a gigabyte free — so the very next thing that tries to
+touch the GPU (the embedder, on an offline-fallback path; the reranker, on
+every load) hits a hard `torch.OutOfMemoryError` mid-query. The fix was two
+lines (add `device="cpu"` to both loaders), but the lesson generalises: once
+one process on a box is deliberately saturating a resource, *anything else
+that silently defaults to the same resource* will fail in a way that looks
+unrelated. Check what's already holding the GPU (or CPU, or RAM) before
+chasing a crash as if it were a logic bug.
 
 ---
 
 ## 13. The corpus: what's inside and how to grow it
 
-The index described here holds **7,935 chunks from 154 documents**, spanning five
+The index described here holds **7,934 chunks from 154 documents**, spanning five
 sources:
 
 - **Statutes** (from LawPhil): the Medical Act of 1959, the UHC Act,
@@ -916,10 +1000,29 @@ first. See the troubleshooting entry below.
 
 ## 14. Troubleshooting & FAQ
 
-**Q: I ran `ask` and it says Ollama isn't reachable.**
-You haven't installed/started Ollama yet, or the model isn't pulled. Install from
-ollama.com, run `ollama pull qwen2.5:7b-instruct`, and confirm with
-`ollama list`. Then `cli.py status` should show Ollama = OK.
+**Q: I ran `ask` and it says the LLM server isn't reachable.**
+The vLLM container isn't running, hasn't finished loading (`docker logs vllm`
+— engine init takes ~60s), or `LLM_BASE_URL`/`LLM_MODEL` don't match how it
+was started. Check `docker ps`, then `curl http://localhost:8000/v1/models`
+directly — you should see your model listed. `cli.py status` should then show
+`LLM server: OK`.
+
+**Q: `torch.OutOfMemoryError: CUDA out of memory`, pointing at `embeddings.py`
+or `rerank.py`.**
+vLLM reserves most of the GPU on purpose (`--gpu-memory-utilization 0.93`), so
+there's normally under a gigabyte free. Embeddings and the reranker are meant
+to stay on CPU regardless — if you see this, something in that path is trying
+to auto-detect CUDA instead of using the explicit `device="cpu"` pin (this
+happened once already; see the callout in §10). If you just edited
+`ragmed/embeddings.py` or `ragmed/rerank.py` to fix exactly this and it's
+*still* happening: restart whatever process is running the query
+(`streamlit run app.py`, `cli.py chat`, etc.). Python doesn't reload code
+you've already imported into a running process — and confusingly, a
+traceback printed *after* your edit will still show your fixed source line,
+because Python reads tracebacks fresh off disk at print time, not from what
+was actually executed. A traceback that looks like it contradicts the code
+you're staring at is a sign to check whether the process predates the fix,
+not to doubt the fix.
 
 **Q: The answer says "The provided corpus does not cover this."**
 That's the system being *honest*, not broken. It means the retrieved chunks
@@ -977,8 +1080,9 @@ Retrieval-only settings (`TOP_K`, weights) don't need a re-ingest.
 **Q: Is any of my data being sent to the cloud?**
 No. Embeddings, the vector store, and the LLM all run locally. The only time the
 system touches the internet is (a) the first download of the embedding model,
-(b) when *you* run a fetcher to download documents, and (c) if you pull an Ollama
-model. Everyday questions are 100% offline.
+(b) when *you* run a fetcher to download documents, and (c) when the vLLM
+container pulls model weights from Hugging Face on first start. Everyday
+questions are 100% offline.
 
 **Q: Is this legal advice?**
 No. It is a *legal-information retrieval tool* over a corpus someone curated. It
@@ -1034,8 +1138,11 @@ Natural directions once the basics are clear, roughly easiest first:
    fixes.
 6. **Improve citations** — parse section numbers even more precisely, or add
    clickable links back to the source documents in the web UI.
-7. **Try a bigger LLM** — if answers feel shallow, `ollama pull` a larger model
-   and set `LLM_MODEL`. Quality usually improves with size, at some speed cost.
+7. **Try a different LLM** — swap `--model` in the vLLM `docker run` command
+   and match `LLM_MODEL` in `.env`. Sizing is the real constraint: a 24GB card
+   fits a 27B-dense model with the vision encoder disabled and eager mode on;
+   a 35B-class MoE needs 32GB+. See `HAVEN_VLLM_MIGRATION.md` §6 for the
+   measured boundary before assuming a bigger model just drops in.
 
 ### The one-paragraph recap to lock it in
 > Your system **indexes** documents once (read → chunk → embed → store) and then

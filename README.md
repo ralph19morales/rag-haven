@@ -33,7 +33,7 @@ streamlit run app.py
 ```bash
 python cli.py ask "What are the grounds for revoking a physician's certificate of registration?"
 python cli.py chat        # interactive
-python cli.py status      # health check: index size, Ollama, OCR, reranker
+python cli.py status      # health check: index size, LLM server, OCR, reranker
 ```
 
 ---
@@ -65,10 +65,10 @@ elsewhere. There's also a [published version of the guide][guide-web].
 | | |
 |---|---|
 | Python | 3.11+ |
-| RAM | 16 GB minimum for a 7B model; 32 GB comfortable for 14B |
-| Disk | ~12 GB (models + index) |
-| GPU | **Strongly recommended.** See [Performance](#performance-expectations) |
-| [Ollama](https://ollama.com/download) | runs the LLM locally |
+| GPU / VRAM | **Required.** 24GB (RTX 3090-class) minimum for the 27B model as configured — see [Performance](#performance-expectations) |
+| RAM | 16 GB is comfortable — the LLM lives in VRAM now, not system RAM; this covers the OS, Python, and the CPU-side embedding/reranker models |
+| Disk | ~21 GB (LLM weights + embedding model + index) |
+| [vLLM](https://docs.vllm.ai/) (Docker) | serves the LLM locally over an OpenAI-compatible API |
 | Tesseract *(optional)* | OCR for scanned PDFs — `winget install UB-Mannheim.TesseractOCR` |
 
 ---
@@ -81,7 +81,19 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # ./.venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
 
-ollama pull qwen2.5:7b-instruct        # or 14b — see Performance
+docker run -d --name vllm --gpus all --ipc=host \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -p 8000:8000 \
+  vllm/vllm-openai:latest \
+  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.93 \
+  --max-num-seqs 2 \
+  --enforce-eager \
+  --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --kv-cache-dtype fp8_e5m2 \
+  --reasoning-parser qwen3               # see HAVEN_VLLM_MIGRATION.md for flag rationale
+
 cp .env.example .env                   # then edit if you want to change models
 ```
 
@@ -122,7 +134,7 @@ skipped.
 
 ## What's in the corpus
 
-Roughly 154 documents / 7,935 passages across five families:
+Roughly 154 documents / 7,934 passages across five families:
 
 | Family | Contents |
 |---|---|
@@ -155,29 +167,31 @@ cost a full `ingest --reset`.
 
 ## Performance expectations
 
-**Be realistic about this before you clone it.** Measured on a 24-core CPU with
-**no GPU**, `qwen2.5:14b-instruct` (Q4_K_M), models warm:
+**Be realistic about this before you clone it.** Measured on an RTX 3090 24GB
+running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (see
+[`HAVEN_VLLM_MIGRATION.md`](HAVEN_VLLM_MIGRATION.md) for the full baseline):
 
-| Phase | Rate | Per question |
-|---|---|---|
-| Retrieval + rerank | — | ~4s |
-| **Prefill** (reading ~2,200 tokens of context) | ~38 tok/s | **~58s** |
-| **Generation** (writing ~400 tokens) | ~7.8 tok/s | **~51s** |
-| | | **≈ 110s total** |
+| Metric | Value |
+|---|---|
+| Weights resident | 19.05 GiB |
+| KV cache available | 2.39 GiB (57,344 tokens) |
+| Max context per request | 16,384 (raisable to 32,768) |
+| Generation throughput | ~14 tok/s |
 
-On CPU, **prefill is about half the wall clock** and scales with `TOP_K`, not
-with model size. Levers, roughly in order of impact:
+~14 tok/s is single-user readable speed, not interactive-fast — a 1024-token
+answer can take over a minute, which is why `LLM_TIMEOUT` defaults to 180s.
+Levers, roughly in order of impact:
 
 | Change | Effect | Costs you |
 |---|---|---|
-| Run on a GPU | ~5–10s per answer | Hardware |
-| `qwen2.5:7b-instruct` | ~2× faster | Instruction adherence across the 8 prompt rules |
-| Lower `TOP_K` | ~7s per passage dropped | Less context per answer |
-| Cap answer length | linear | Shorter answers |
+| More VRAM (32GB+) | Room for a MoE-class model, longer context, more concurrency | Hardware |
+| Lower `TOP_K` | Less to prefill | Less context per answer |
+| Lower `LLM_MAX_TOKENS` | Linear | Shorter answers |
 | `RERANK_ENABLED=false` | ~3s | Ranking quality |
 
-A 14B model on CPU cannot be made to feel fast. Pick your quality floor
-deliberately.
+24GB runs 27B-class dense models only with the vision encoder disabled and
+eager mode on (`--enforce-eager`, `--limit-mm-per-prompt`). Pick your quality
+floor deliberately.
 
 ---
 
@@ -188,7 +202,7 @@ Everything is tunable in `ragmed/config.py` or a `.env` file (copy from
 
 | Setting | Default | What it does |
 |---|---|---|
-| `LLM_MODEL` | `qwen2.5:7b-instruct` | Any model Ollama hosts |
+| `LLM_MODEL` | `QuantTrio/Qwen3.6-27B-AWQ` | Any model your vLLM server is serving |
 | `TOP_K` | `6` | Passages given to the LLM |
 | `MAX_CHUNKS_PER_SOURCE` | `3` | Stops one landmark document filling the context with itself |
 | `MIN_CHUNKS_PER_CLAUSE` | `2` | Slots reserved per *ask* of a compound question |

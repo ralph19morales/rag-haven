@@ -42,13 +42,13 @@ def _model():
     from sentence_transformers import CrossEncoder
 
     try:
-        return CrossEncoder(config.RERANK_MODEL, max_length=512)
+        return CrossEncoder(config.RERANK_MODEL, max_length=512, device="cpu")
     except Exception:  # noqa: BLE001 - network, DNS, TLS, hub errors
         from huggingface_hub import snapshot_download
 
         local_dir = snapshot_download(config.RERANK_MODEL,
                                       local_files_only=True)
-        return CrossEncoder(local_dir, max_length=512)
+        return CrossEncoder(local_dir, max_length=512, device="cpu")
 
 
 def is_available() -> bool:

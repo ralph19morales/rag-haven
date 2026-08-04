@@ -121,8 +121,8 @@ RERANK_MIN_SPREAD = float(_env("RERANK_MIN_SPREAD", "0.02"))
 # How many prior user+assistant PAIRS are replayed to the model. Kept small on
 # purpose: history shares a fixed context window with the retrieved passages,
 # and passages are what the answer must be grounded in. Budget at TOP_K=10 and
-# NUM_CTX=8192 leaves roughly 3,900 tokens for history — 3 pairs at the limits
-# below use well under that.
+# an 8192-token window leaves roughly 3,900 tokens for history — 3 pairs at the
+# limits below use well under that.
 HISTORY_TURNS = _env_int("HISTORY_TURNS", 3)
 HISTORY_USER_CHARS = _env_int("HISTORY_USER_CHARS", 400)
 # Assistant replies are the long part of a transcript and the least useful to
@@ -173,18 +173,24 @@ HYDE_MIN_SIM = float(_env("HYDE_MIN_SIM", "0.68"))
 HYDE_CLAUSE_MIN_SIM = float(_env("HYDE_CLAUSE_MIN_SIM", "0.70"))
 HYDE_MAX_TOKENS = _env_int("HYDE_MAX_TOKENS", 200)  # keep the draft short
 
-# --- LLM (local, via Ollama) ----------------------------------------------
-OLLAMA_HOST = _env("OLLAMA_HOST", "http://localhost:11434")
-# qwen2.5:7b-instruct is strong at instruction-following & citation. Good
-# alternatives: "llama3.1:8b-instruct-q4_K_M", "mistral:7b-instruct".
-LLM_MODEL = _env("LLM_MODEL", "qwen2.5:7b-instruct")
-LLM_TEMPERATURE = float(_env("LLM_TEMPERATURE", "0.1"))  # low = factual
-LLM_NUM_CTX = _env_int("LLM_NUM_CTX", 8192)    # context window tokens
-# How long Ollama keeps the model in memory after a request. Its default is 5
-# minutes, so a user who reads an answer before asking again pays a full
-# model reload — measured at tens of seconds for a 9 GB model on CPU. Costs
-# only idle RAM; set "0" to evict immediately if memory is tight.
-OLLAMA_KEEP_ALIVE = _env("OLLAMA_KEEP_ALIVE", "30m")
+# --- LLM (local, via vLLM — OpenAI-compatible API) --------------------------
+LLM_BASE_URL = _env("LLM_BASE_URL", "http://localhost:8000/v1")
+LLM_API_KEY = _env("LLM_API_KEY", "not-needed")  # vLLM ignores it; the client just requires a non-empty string
+LLM_MODEL = _env("LLM_MODEL", "QuantTrio/Qwen3.6-27B-AWQ")
+# Qwen3 loops on greedy decode — do not set temperature to 0.
+LLM_TEMPERATURE = float(_env("LLM_TEMPERATURE", "0.7"))
+LLM_TOP_P = float(_env("LLM_TOP_P", "0.95"))
+LLM_TOP_K = _env_int("LLM_TOP_K", 20)
+LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 1024)  # caps TOTAL generation, not just the reply
+# Measured ~14 tok/s on a 24GB card — a 1024-token answer can take over a
+# minute, so the default client timeout surfaces as a false retrieval failure.
+LLM_TIMEOUT = _env_int("LLM_TIMEOUT", 180)
+# Qwen3.6 is a reasoning model: left on, it spends max_tokens on chain-of-
+# thought (in a separate `reasoning` field) and can return content=None. The
+# retrieved/reranked context has already narrowed the answer, so extended
+# reasoning adds latency without adding grounding. Not a standard OpenAI
+# param — sent via extra_body in ragmed/llm.py.
+LLM_ENABLE_THINKING = _env_bool("LLM_ENABLE_THINKING", False)
 
 
 def ensure_dirs() -> None:

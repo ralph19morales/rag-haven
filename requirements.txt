@@ -2,7 +2,7 @@
 chromadb>=0.5.0              # local persistent vector store
 sentence-transformers>=3.0.0 # local embeddings (bge models)
 rank-bm25>=0.2.2            # keyword/lexical retrieval for hybrid search
-ollama>=0.3.0              # client for the local Ollama LLM server
+openai>=1.40.0             # client for the local vLLM OpenAI-compatible server
 
 # --- Document loading ---
 pypdf>=4.2.0              # PDF text extraction (fast path)

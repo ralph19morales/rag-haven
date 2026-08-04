@@ -119,7 +119,7 @@ def cmd_status(args):
     console.print(Panel.fit(
         f"Embedding model: {config.EMBED_MODEL}\n"
         f"LLM model:       {config.LLM_MODEL}\n"
-        f"Ollama:          {'[green]OK[/]' if ok else '[red]' + msg + '[/]'}\n"
+        f"LLM server:      {'[green]OK[/]' if ok else '[red]' + msg + '[/]'}\n"
         f"OCR (scanned):   {ocr_line}\n"
         f"Reranker:        {rerank_line}\n"
         f"Collection:      {config.COLLECTION_NAME}\n"

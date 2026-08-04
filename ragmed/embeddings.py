@@ -31,13 +31,13 @@ def _model():
     from sentence_transformers import SentenceTransformer
 
     try:
-        return SentenceTransformer(config.EMBED_MODEL)
+        return SentenceTransformer(config.EMBED_MODEL, device="cpu")
     except Exception:  # noqa: BLE001 - network, DNS, TLS, hub errors
         from huggingface_hub import snapshot_download
 
         local_dir = snapshot_download(config.EMBED_MODEL,
                                       local_files_only=True)
-        return SentenceTransformer(local_dir)
+        return SentenceTransformer(local_dir, device="cpu")
 
 
 def embed_documents(texts: list[str]) -> list[list[float]]:

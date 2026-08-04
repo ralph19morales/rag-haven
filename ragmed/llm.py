@@ -1,35 +1,36 @@
-"""Local LLM wrapper (Ollama)."""
+"""Local LLM wrapper (vLLM, via its OpenAI-compatible API)."""
 from __future__ import annotations
 
 from . import config
 
 
 def _client():
-    import ollama
+    from openai import OpenAI
 
-    return ollama.Client(host=config.OLLAMA_HOST)
+    return OpenAI(
+        base_url=config.LLM_BASE_URL,
+        api_key=config.LLM_API_KEY,
+        timeout=config.LLM_TIMEOUT,
+    )
 
 
 def is_available() -> tuple[bool, str]:
-    """Check the Ollama server is up and the configured model is pulled."""
+    """Check the vLLM server is up and serving the configured model."""
     try:
         client = _client()
-        models = client.list().get("models", [])
-        names = {m.get("model", m.get("name", "")) for m in models}
-        # Match with or without an explicit :latest tag.
+        models = client.models.list()
+        names = {m.id for m in models.data}
         wanted = config.LLM_MODEL
-        ok = any(n == wanted or n.split(":")[0] == wanted.split(":")[0]
-                 for n in names)
-        if not ok:
+        if wanted not in names:
             return False, (
-                f"Ollama is running but model '{wanted}' is not pulled. "
-                f"Run:  ollama pull {wanted}"
+                f"vLLM is running but model '{wanted}' is not loaded. "
+                f"Loaded: {', '.join(sorted(names)) or '(none)'}"
             )
         return True, "ok"
     except Exception as e:  # noqa: BLE001
         return False, (
-            f"Cannot reach Ollama at {config.OLLAMA_HOST} ({e}). "
-            "Is 'ollama serve' running?"
+            f"Cannot reach vLLM at {config.LLM_BASE_URL} ({e}). "
+            "Is the vllm container running?"
         )
 
 
@@ -37,38 +38,33 @@ def generate(system: str, prompt: str, stream: bool = False,
              max_tokens: int | None = None):
     """Generate a completion. Returns a string, or a generator if stream=True.
 
-    max_tokens caps the reply (Ollama's num_predict) — used by short auxiliary
-    calls like HyDE drafting, where a rambling answer wastes time and dilutes
-    the embedding it is meant to produce."""
+    max_tokens caps the reply — used by short auxiliary calls like HyDE
+    drafting, where a rambling answer wastes time and dilutes the embedding it
+    is meant to produce. Defaults to LLM_MAX_TOKENS when not given."""
     client = _client()
-    options = {
-        "temperature": config.LLM_TEMPERATURE,
-        "num_ctx": config.LLM_NUM_CTX,
-    }
-    if max_tokens:
-        options["num_predict"] = max_tokens
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": prompt},
     ]
-    # Keep the model resident between questions. Ollama evicts after 5 minutes
-    # idle by default, and reloading a 9 GB model off disk costs far more than
-    # the question itself — a pure latency win with no effect on the answer.
-    # Sent per request so this works against any Ollama server without asking
-    # the user to reconfigure the service.
-    ka = config.OLLAMA_KEEP_ALIVE
+    kwargs = dict(
+        model=config.LLM_MODEL,
+        messages=messages,
+        temperature=config.LLM_TEMPERATURE,
+        top_p=config.LLM_TOP_P,
+        max_tokens=max_tokens or config.LLM_MAX_TOKENS,
+        extra_body={
+            "top_k": config.LLM_TOP_K,
+            "chat_template_kwargs": {"enable_thinking": config.LLM_ENABLE_THINKING},
+        },
+    )
 
     if stream:
         def _gen():
-            for part in client.chat(
-                model=config.LLM_MODEL, messages=messages,
-                options=options, stream=True, keep_alive=ka,
-            ):
-                yield part["message"]["content"]
+            for chunk in client.chat.completions.create(stream=True, **kwargs):
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
         return _gen()
 
-    resp = client.chat(
-        model=config.LLM_MODEL, messages=messages, options=options,
-        keep_alive=ka,
-    )
-    return resp["message"]["content"]
+    resp = client.chat.completions.create(**kwargs)
+    return resp.choices[0].message.content

@@ -439,7 +439,7 @@
         </p>
       </figure>
       <div class="facts">
-        <span class="fact"><span class="k">Chunks indexed</span><b>7,935</b></span>
+        <span class="fact"><span class="k">Chunks indexed</span><b>7,934</b></span>
         <span class="fact"><span class="k">Source documents</span><b>154</b></span>
         <span class="fact"><span class="k">Source families</span><b>5</b></span>
         <span class="fact"><span class="k">Inference</span><b>On-device</b></span>
@@ -510,7 +510,7 @@
             <tr><td>Cataloguing the library ahead of time</td><td>Ingestion — <code>ragmed/ingest.py</code></td></tr>
             <tr><td>The card catalog / search index</td><td><code>vectorstore.py</code>, <code>retriever.py</code></td></tr>
             <tr><td>The librarian who fetches pages</td><td>Retriever — <code>ragmed/retriever.py</code></td></tr>
-            <tr><td>The assistant who writes the answer</td><td>LLM via Ollama — <code>llm.py</code>, <code>rag.py</code></td></tr>
+            <tr><td>The assistant who writes the answer</td><td>LLM via vLLM — <code>llm.py</code>, <code>rag.py</code></td></tr>
             <tr><td>The front desk where questions arrive</td><td>CLI / Web UI — <code>cli.py</code>, <code>app.py</code></td></tr>
           </tbody>
         </table>
@@ -537,8 +537,8 @@
             <tr><td>HyDE</td><td><em>Hypothetical Document Embeddings.</em> When your question is worded nothing like the law, the system has the LLM draft a short <em>imaginary</em> answer in legal vocabulary and searches with that too. You never see the draft — it exists only to supply the terminology your question lacked.</td></tr>
             <tr><td>Top-K</td><td>How many chunks are handed to the LLM (yours: 6). Every slot spent on a duplicate, or on a fourth passage from the same case, is a slot the answer doesn't get.</td></tr>
             <tr><td>Bi-encoder vs cross-encoder</td><td>The two ways to compare a question with a chunk. A <strong>bi-encoder</strong> vectorises each <em>separately</em> and compares vectors — fast enough to search everything, but the chunk's vector never saw your question. A <strong>cross-encoder</strong> reads the pair <em>together</em> and scores them directly — far more accurate, far too slow for a whole corpus. Yours uses the first to find ~30 candidates and the second to order them: the <strong>retrieve-then-rerank</strong> pattern.</td></tr>
-            <tr><td>LLM</td><td>The AI that writes the final answer. Yours is <code>qwen2.5:7b-instruct</code>, run locally by Ollama.</td></tr>
-            <tr><td>Ollama</td><td>A free program that runs LLMs on your own computer.</td></tr>
+            <tr><td>LLM</td><td>The AI that writes the final answer. Yours is <code>Qwen3.6-27B-AWQ</code>, served locally by vLLM.</td></tr>
+            <tr><td>vLLM</td><td>A high-throughput local inference server, serving LLMs over an OpenAI-compatible API — the same engine a production appliance would ship with.</td></tr>
             <tr><td>Prompt</td><td>The full text sent to the LLM: your question + retrieved passages + instructions.</td></tr>
             <tr><td>Grounding</td><td>Forcing the AI to answer strictly from provided sources.</td></tr>
             <tr><td>Hallucination</td><td>When an AI confidently invents false information. RAG + grounding is the defense.</td></tr>
@@ -575,7 +575,7 @@ LLM writes cited answer → show sources</code></pre>
       </div>
       <div class="note">
         <span class="tag">Why separate them?</span>
-        <p>Reading and embedding documents is slow and only needs to happen when documents change. Answering must be fast and on demand. Splitting the work means every question reuses the expensive indexing done once. The index described here holds <strong>7,935 chunks from 154 documents</strong>.</p>
+        <p>Reading and embedding documents is slow and only needs to happen when documents change. Answering must be fast and on demand. Splitting the work means every question reuses the expensive indexing done once. The index described here holds <strong>7,934 chunks from 154 documents</strong>.</p>
       </div>
     </section>
 
@@ -627,7 +627,7 @@ LLM writes cited answer → show sources</code></pre>
         <li><strong>Remember the conversation.</strong> Haven holds the session so follow-ups work — which is two problems, not one. <strong>Retrieval breaks first:</strong> "And is there a deadline?" carries none of the words that say what it is about, so searched as written it finds noise, and by the time history reaches the prompt retrieval has already failed. A dependent follow-up is therefore <em>rewritten into a standalone question before searching</em> — resolving references only, never adding terminology or facts you did not say.
           <p style="margin-top:8px">And one risk larger here than in an ordinary chatbot: once Haven's earlier answers sit in the prompt they become a second apparent source, and it will cite a provision it "remembers stating" with no retrieved passage behind it — a citation a reader cannot tell from a real one. Three defences: the block is labelled <em>"for reference only — not a source, never cite it"</em>; a system-prompt rule forbids citing it or carrying a citation between turns; and the retrieved passages sit <strong>nearer the question</strong> than the history, the position the model weighs most. History is bounded, and every step fails open.</p></li>
         <li><strong>Build the prompt.</strong> Three parts: a <strong>system prompt</strong> (the rulebook — answer only from context, cite law &amp; section, admit when the corpus is silent), the <strong>context</strong> (the 6 chunks, each labeled with law/section/source), and <strong>your question</strong>.</li>
-        <li><strong>The LLM writes the answer.</strong> Ollama runs <code>qwen2.5:7b-instruct</code> locally and streams a grounded, cited answer. Temperature is low (0.1) to stay factual.</li>
+        <li><strong>The LLM writes the answer.</strong> vLLM serves <code>Qwen3.6-27B-AWQ</code> locally over an OpenAI-compatible API and streams a grounded, cited answer. Sampling is <em>not</em> greedy (<code>temperature=0.7</code>, <code>top_p=0.95</code>, <code>top_k=20</code>) — Qwen3-family models loop on repeated tokens under greedy decoding, so temperature-0 "for more factual output" actually breaks generation. Thinking mode is explicitly off (<code>enable_thinking: False</code>): left on, this reasoning model burns its token budget on chain-of-thought and can return no content at all — observed directly during setup, where a two-sentence question spent 200 tokens reasoning and answered nothing.</li>
         <li><strong>Show answer + sources.</strong> You get the answer plus the list of source chunks (law, section, filename, relevance score) so you can verify every point.</li>
       </ol>
       <div class="note">
@@ -654,7 +654,7 @@ LLM writes cited answer → show sources</code></pre>
             <tr><td><code>retriever.py</code></td><td>The hybrid search brain: dense + BM25, then fuse, rerank, cap, reserve per-ask slots, and rank.</td></tr>
             <tr><td><code>rerank.py</code></td><td>The cross-encoder that re-scores candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands.</td></tr>
             <tr><td><code>conversation.py</code></td><td>Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they cannot be cited as a source.</td></tr>
-            <tr><td><code>llm.py</code></td><td>Talks to Ollama; checks it's running and the model is available.</td></tr>
+            <tr><td><code>llm.py</code></td><td>Talks to vLLM over its OpenAI-compatible API; checks the server is up and the configured model is loaded.</td></tr>
             <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → get the answer. Holds the system prompt.</td></tr>
             <tr><td><code>ingest.py</code></td><td>The indexing pipeline that runs Journey A over the whole corpus.</td></tr>
           </tbody>
@@ -686,11 +686,15 @@ LLM writes cited answer → show sources</code></pre>
     <section class="doc" id="s10">
       <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why we chose each technology</h2></div>
       <h3>Why "fully local / offline"?</h3>
-      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: two installs (Ollama, Tesseract), and answers run on CPU rather than a datacentre GPU. For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
-      <h3>Why Ollama + qwen2.5:7b-instruct?</h3>
-      <p>Ollama is the simplest way to run an LLM locally. <code>qwen2.5:7b-instruct</code> is a 7-billion-parameter model that's strong at following instructions and citing sources, and runs comfortably on a machine with ~16 GB of RAM to spare. Swap it via one setting.</p>
+      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: a GPU with meaningful VRAM, a Docker install, and Tesseract for OCR. On a 24GB consumer card generation runs at ~14 tok/s — single-user readable speed, not interactive-fast. Embeddings and reranking still run on CPU regardless of GPU size (see the callout below). For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
+      <h3>Why vLLM + Qwen3.6-27B-AWQ?</h3>
+      <p>vLLM is what a production/appliance deployment of this kind of system actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime that transfers unchanged to client hardware. <code>Qwen3.6-27B-AWQ</code> is a 4-bit-quantized 27B model; AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the real resident footprint on a 24GB card is <strong>19.05&nbsp;GiB</strong> — more than the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number that doesn't transfer to vLLM's AWQ path. Swap the model with one flag (<code>--model</code>) and a matching <code>LLM_MODEL</code> in <code>.env</code>.</p>
       <h3>Why bge-base for embeddings?</h3>
       <p><code>BAAI/bge-base-en-v1.5</code> is a well-regarded open embedding model with a great quality-to-speed balance on CPU. Drop to <code>bge-small</code> (faster) or <code>bge-large</code> (more accurate) via <code>EMBED_MODEL</code>.</p>
+      <div class="note">
+        <span class="tag">Why CPU, specifically, and why it matters now</span>
+        <p>Embeddings and the reranker (<code>embeddings.py</code>, <code>rerank.py</code>) are explicitly pinned to <code>device="cpu"</code> in code, not left to whatever PyTorch picks. This didn't matter under Ollama, which ran on CPU too — but vLLM claims most of the GPU by design (<code>--gpu-memory-utilization 0.93</code>, under a gigabyte left free), so a model that auto-detects CUDA hits an out-of-memory crash mid-query instead of gracefully falling back. This shipped once: the embedder's offline-fallback path and the reranker's loader both omitted the pin, so a Hugging Face Hub hiccup (or, for the reranker, every load) sent them straight into the wall vLLM had already built.</p>
+      </div>
       <h3>Why Chroma?</h3>
       <p>A local, persistent, zero-config vector database — it just writes to <code>data/chroma/</code>. No separate server. Perfect for a single-machine project.</p>
       <h3>Why <em>hybrid</em> retrieval?</h3>
@@ -703,17 +707,28 @@ LLM writes cited answer → show sources</code></pre>
     <section class="doc" id="s11">
       <div class="sec-head"><span class="num serif">§&nbsp;11</span><h2 class="serif">How to actually use it</h2></div>
       <p>Run everything from the project folder using the venv's Python: <code>.\.venv\Scripts\python.exe</code>.</p>
-      <p class="pre-label">One-time setup (mostly done)</p>
-      <pre><code># Python libraries (already installed in .venv)
+      <p class="pre-label">One-time setup</p>
+      <pre><code># Python libraries
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
-# Install Ollama (STILL TO DO — needed for answers)
-# Download from https://ollama.com/download, then:
-ollama pull qwen2.5:7b-instruct
+# Tesseract for OCR — needed for scanned PDFs</code></pre>
+      <p class="pre-label">vLLM — needs Docker + an NVIDIA GPU (run separately; see HAVEN_VLLM_MIGRATION.md §5 for why each flag is there)</p>
+      <pre><code>docker run -d --name vllm --gpus all --ipc=host \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  -p 8000:8000 \
+  vllm/vllm-openai:latest \
+  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.93 \
+  --max-num-seqs 2 \
+  --enforce-eager \
+  --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --kv-cache-dtype fp8_e5m2 \
+  --reasoning-parser qwen3
 
-# Tesseract for OCR (already installed via winget)</code></pre>
+docker update --restart unless-stopped vllm</code></pre>
       <p class="pre-label">Everyday commands</p>
-      <pre><code># Health check: index size, Ollama up?, OCR ready?
+      <pre><code># Health check: index size, is vLLM up?, OCR ready?
 .\.venv\Scripts\python.exe cli.py status
 
 # Build / refresh the index after adding documents
@@ -743,9 +758,12 @@ ollama pull qwen2.5:7b-instruct
           <thead><tr><th>Setting</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
             <tr><td><code>EMBED_MODEL</code></td><td>Which embedding model. <em>Changing needs a full <code>ingest --reset</code>.</em></td><td>bge-base-en-v1.5</td></tr>
-            <tr><td><code>LLM_MODEL</code></td><td>Which Ollama model writes answers.</td><td>qwen2.5:7b-instruct</td></tr>
-            <tr><td><code>LLM_TEMPERATURE</code></td><td>Creativity dial (0 = strict/factual).</td><td>0.1</td></tr>
-            <tr><td><code>LLM_NUM_CTX</code></td><td>How much text the model considers at once (tokens).</td><td>8192</td></tr>
+            <tr><td><code>LLM_BASE_URL</code></td><td>Where vLLM's OpenAI-compatible API is listening.</td><td>localhost:8000/v1</td></tr>
+            <tr><td><code>LLM_MODEL</code></td><td>Which model vLLM is serving — must match its <code>--model</code> flag.</td><td>Qwen3.6-27B-AWQ</td></tr>
+            <tr><td><code>LLM_TEMPERATURE</code> / <code>TOP_P</code> / <code>TOP_K</code></td><td>Sampling. <strong>Don't set temperature to 0</strong> — Qwen3-family models loop on repeated tokens under greedy decoding.</td><td>0.7 / 0.95 / 20</td></tr>
+            <tr><td><code>LLM_MAX_TOKENS</code></td><td>Caps <em>total</em> generation per answer.</td><td>1024</td></tr>
+            <tr><td><code>LLM_TIMEOUT</code></td><td>Client HTTP timeout (seconds). At ~14 tok/s a full answer can take over a minute.</td><td>180</td></tr>
+            <tr><td><code>LLM_ENABLE_THINKING</code></td><td>Let Qwen3.6 reason before answering. Left on, it can burn the token budget on chain-of-thought and return no content.</td><td>false</td></tr>
             <tr><td><code>CHUNK_SIZE</code></td><td>Target characters per chunk. <em>Re-ingest after changing.</em></td><td>1100</td></tr>
             <tr><td><code>CHUNK_OVERLAP</code></td><td>Characters shared between neighbors.</td><td>150</td></tr>
             <tr><td><code>TOP_K</code></td><td>How many chunks are fed to the LLM. More = more context, slower.</td><td>6</td></tr>
@@ -780,43 +798,44 @@ ollama pull qwen2.5:7b-instruct
     <!-- 12b -->
     <section class="doc" id="s12b">
       <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">Why it's slow, and what actually helps</h2></div>
-      <p>Worth knowing before judging the system: on a machine with <strong>no GPU</strong>, a 14B model spends most of its time on two things — and only one of them is what people assume.</p>
+      <p>Worth knowing before judging the system: even on a dedicated GPU, this is <strong>single-user readable speed, not interactive-fast.</strong> Measured on an RTX&nbsp;3090&nbsp;24GB running <code>QuantTrio/Qwen3.6-27B-AWQ</code> under vLLM (full baseline in <code>HAVEN_VLLM_MIGRATION.md</code> §2):</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Phase</th><th>Rate</th><th>Per question</th></tr></thead>
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
           <tbody>
-            <tr><td>Retrieval + reranking</td><td>—</td><td>~4s</td></tr>
-            <tr><td><strong>Prefill</strong> — <em>reading</em> the prompt</td><td>~38 tok/s</td><td><strong>~58s</strong></td></tr>
-            <tr><td><strong>Generation</strong> — <em>writing</em> the answer</td><td>~7.8 tok/s</td><td><strong>~51s</strong></td></tr>
+            <tr><td>Weights resident</td><td>19.05&nbsp;GiB</td></tr>
+            <tr><td>KV cache available</td><td>2.39&nbsp;GiB (57,344 tokens)</td></tr>
+            <tr><td>Max context per request</td><td>16,384 (raisable to 32,768)</td></tr>
+            <tr><td>Max concurrency @ 16K context</td><td>~3.5×</td></tr>
+            <tr><td>Generation throughput</td><td>~14 tok/s</td></tr>
+            <tr><td>Engine init (container startup)</td><td>~60s, one-time</td></tr>
           </tbody>
         </table>
       </div>
-      <p><strong>Prefill is about half the wall clock, and it scales with <code>TOP_K</code>, not with model size.</strong> Dropping <code>TOP_K</code> from 10 to 6 removed ~1,100 tokens of prompt and cut ~30 seconds per question with no model change at all — the lever most people skip while arguing about parameter counts.</p>
+      <p>A 1024-token answer (<code>LLM_MAX_TOKENS</code>, the default cap) can take over a minute at that rate — exactly why <code>LLM_TIMEOUT</code> defaults to <code>180</code> rather than a typical client's default. Retrieval + reranking is still the cheap part by comparison, running in low single-digit seconds on CPU.</p>
+      <p>Two things haven't been re-measured on this stack and are worth doing yourself before trusting a number here: <strong>prefill rate</strong> (under the old CPU/Ollama setup this was roughly half the wall clock and scaled with <code>TOP_K</code>, not model size — a GPU almost certainly narrows that gap, but it hasn't been confirmed) and <strong>time-to-first-token</strong> as experienced in the UI. Per this guide's own rule below — if you touch a threshold, measure it — the same applies to performance claims.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Change</th><th>Effect</th><th>Costs you</th></tr></thead>
           <tbody>
-            <tr><td><code>OLLAMA_KEEP_ALIVE</code></td><td>avoids a 9&nbsp;GB reload after idle</td><td>idle RAM — free</td></tr>
-            <tr><td>Show sources before generating</td><td>~16s off the <em>perceived</em> wait</td><td>nothing</td></tr>
-            <tr><td>Lower <code>TOP_K</code></td><td>~7s per passage dropped</td><td>less context per answer</td></tr>
-            <tr><td>Cap answer length</td><td>linear</td><td>shorter answers</td></tr>
-            <tr><td>Smaller model</td><td>~2× per halving</td><td>instruction adherence</td></tr>
-            <tr><td>A GPU</td><td>10–50×</td><td>hardware</td></tr>
+            <tr><td>More VRAM (32GB+)</td><td>room for a MoE-class model, longer context, more concurrency</td><td>hardware</td></tr>
+            <tr><td>Lower <code>TOP_K</code></td><td>less prompt to prefill</td><td>less context per answer</td></tr>
+            <tr><td>Lower <code>LLM_MAX_TOKENS</code></td><td>linear</td><td>shorter answers</td></tr>
+            <tr><td><code>RERANK_ENABLED=false</code></td><td>~3s</td><td>ranking quality</td></tr>
+            <tr><td>Remove <code>--enforce-eager</code></td><td>~20% more throughput</td><td>1–2&nbsp;GiB of VRAM, taken straight from the KV pool</td></tr>
           </tbody>
         </table>
       </div>
-      <h3>Perceived speed is a different problem — and cheaper to fix</h3>
-      <p>The generator is <strong>lazy</strong>: retrieval finishes and hands back the passages before the model has read a single token. So Haven shows the laws it found at <strong>~7s</strong>, while the answer itself does not start until <strong>~23s</strong>. You get something real to read 16 seconds earlier, at no cost to the answer.</p>
       <div class="note warn">
         <span class="tag">Don't benchmark against yourself</span>
-        <p>The most common bad measurement, and one made while writing this guide: timing a query while the app is still running. A Streamlit process holding 1.5&nbsp;GB of models, twelve Python processes and Ollama all competing inflated a time-to-first-token from <strong>23s to 114s</strong> — and produced the confident, wrong conclusion that recent changes had made things worse. Stop the app, check what else holds models, warm what you are not measuring, then time it.</p>
+        <p>The failure that actually bit this project, not a hypothetical one: <code>embeddings.py</code> and <code>rerank.py</code> both load small models meant to stay on CPU regardless of what GPU is available — but one code path in each omitted the explicit <code>device="cpu"</code> pin, so they auto-detected CUDA instead. Invisible on a machine with GPU headroom to spare. Not invisible once vLLM is running: <code>--gpu-memory-utilization 0.93</code> leaves under a gigabyte free, so the next thing that silently reaches for the GPU — the embedder on its offline-fallback path, the reranker on every load — hits a hard <code>torch.OutOfMemoryError</code> mid-query. The fix was two lines, but the lesson generalises: once one process on a box is deliberately saturating a resource, anything else that silently defaults to the same resource fails in a way that looks unrelated. Check what's already holding the GPU (or CPU, or RAM) before chasing a crash as if it were a logic bug.</p>
       </div>
     </section>
 
     <!-- 13 -->
     <section class="doc" id="s13">
       <div class="sec-head"><span class="num serif">§&nbsp;13</span><h2 class="serif">The corpus: what's inside &amp; how to grow it</h2></div>
-      <p>The index described here holds <strong>7,935 chunks from 154 documents</strong>, across five sources:</p>
+      <p>The index described here holds <strong>7,934 chunks from 154 documents</strong>, across five sources:</p>
       <ul>
         <li><strong>Statutes</strong> (LawPhil): the Medical Act of 1959, the UHC Act, Anti-Hospital Deposit/Detention laws, Data Privacy Act, Civil Code, Revised Penal Code, and more.</li>
         <li><strong>PRC issuances</strong>: Board of Medicine Board Law, Code of Ethics, resolutions, and the disciplinary/administrative-investigation rules (these last came in via OCR).</li>
@@ -848,8 +867,10 @@ ollama pull qwen2.5:7b-instruct
     <!-- 14 -->
     <section class="doc" id="s14">
       <div class="sec-head"><span class="num serif">§&nbsp;14</span><h2 class="serif">Troubleshooting &amp; FAQ</h2></div>
-      <h3>"Ollama isn't reachable" when I run <code>ask</code></h3>
-      <p>You haven't installed/started Ollama, or the model isn't pulled. Install from ollama.com, run <code>ollama pull qwen2.5:7b-instruct</code>, confirm with <code>ollama list</code>. Then <code>cli.py status</code> should show Ollama = OK.</p>
+      <h3>"The LLM server isn't reachable" when I run <code>ask</code></h3>
+      <p>The vLLM container isn't running, hasn't finished loading (<code>docker logs vllm</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started. Check <code>docker ps</code>, then <code>curl http://localhost:8000/v1/models</code> directly. Then <code>cli.py status</code> should show <code>LLM server: OK</code>.</p>
+      <h3><code>torch.OutOfMemoryError: CUDA out of memory</code>, pointing at <code>embeddings.py</code> or <code>rerank.py</code></h3>
+      <p>vLLM reserves most of the GPU on purpose, so there's normally under a gigabyte free. Embeddings and the reranker are meant to stay on CPU regardless — see the callout in §10 if this is happening. If you just fixed exactly this and it's <em>still</em> happening: restart whatever process is running the query (<code>streamlit run app.py</code>, <code>cli.py chat</code>). Python doesn't reload code already imported into a running process — and a traceback printed after your edit will still show your fixed source line, because Python reads tracebacks fresh off disk at print time, not from what was actually executed. A traceback that seems to contradict the code in front of you is a sign to check whether the process predates the fix.</p>
       <h3>The answer says "The provided corpus does not cover this."</h3>
       <p>That's the system being <em>honest</em>, not broken. The retrieved chunks didn't contain the answer. Fix by adding the relevant document and re-ingesting. This is a feature — it's refusing to make things up.</p>
       <h3>The answer is confident but wrong — or it answered only half my question</h3>
@@ -874,7 +895,7 @@ ollama pull qwen2.5:7b-instruct
       <h3>How do I know the answer is correct?</h3>
       <p>Every answer lists its <strong>sources</strong> (law, section, file). Open the cited section in the actual document and verify. RAG makes this easy by design — but it's still on you to look.</p>
       <h3>Is any of my data sent to the cloud?</h3>
-      <p>No. Embeddings, the vector store, and the LLM all run locally. The internet is touched only for: the first download of the embedding model, when <em>you</em> run a fetcher, and pulling an Ollama model. Everyday questions are 100% offline.</p>
+      <p>No. Embeddings, the vector store, and the LLM all run locally. The internet is touched only for: the first download of the embedding model, when <em>you</em> run a fetcher, and when the vLLM container pulls model weights on first start. Everyday questions are 100% offline.</p>
       <h3>Is this legal advice?</h3>
       <p>No. It is a <em>legal-information retrieval tool</em> over a corpus someone curated. It does not interpret the law, does not account for facts specific to a case, and does not replace a licensed Philippine attorney. The system prompt requires it to say so, and every answer ships with its sources precisely so a human can check them. <strong>Verify against the cited text before relying on anything.</strong></p>
       <h3>How accurate is it, honestly?</h3>
@@ -892,7 +913,7 @@ ollama pull qwen2.5:7b-instruct
         <li><strong>Run the tests after changing the engine</strong> — <code>tests/</code> holds 164 checks. Add a case whenever you fix something.</li>
         <li><strong>The reranker is already in</strong> (§8) — if queries feel slow, that is where the seconds go: <code>RERANK_ENABLED=false</code> or the MiniLM model. Before tuning it, work out whether your problem is <strong>ordering</strong> (right document, wrong chunk — its job) or <strong>reach</strong> (the chunk never retrieved — it cannot help). They look identical in a bad answer and need opposite fixes.</li>
         <li><strong>Improve citations</strong> — parse section numbers even more precisely, or add clickable links back to source documents in the web UI.</li>
-        <li><strong>Try a bigger LLM</strong> — <code>ollama pull</code> a larger model and set <code>LLM_MODEL</code>. Quality usually improves with size, at some speed cost.</li>
+        <li><strong>Try a different LLM</strong> — swap <code>--model</code> in the vLLM <code>docker run</code> command and match <code>LLM_MODEL</code>. Sizing is the real constraint: 24GB fits a 27B-dense model with the vision encoder disabled; a 35B-class MoE needs 32GB+ (<code>HAVEN_VLLM_MIGRATION.md</code> §6).</li>
       </ol>
       <div class="recap">
         <div class="tag">Lock it in — the one-paragraph recap</div>
