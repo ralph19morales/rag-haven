@@ -51,6 +51,7 @@ def ids(rs: list[Retrieved]) -> list[str]:
 def run() -> int:
     r = []
     orig_score = rerank.score
+    orig_score_pairs = rerank.score_pairs
     orig_spread = config.RERANK_MIN_SPREAD
     orig_enabled = config.RERANK_ENABLED
     config.RERANK_MIN_SPREAD = 0.02
@@ -106,32 +107,68 @@ def run() -> int:
         r.append(check("empty input is handled", _rerank("q", [], 10), []))
 
         # --- per-clause reranking -----------------------------------------
+        # These stub `score_pairs`, not `score`: per-clause reranking sends
+        # EVERY clause's pairs through the cross-encoder in one batched call
+        # (each pair carries its own query), which is what removed two
+        # sequential CPU passes per compound question. Stubbing `score` here
+        # silently tested nothing once that changed — the real model ran
+        # instead of the fake and two cases failed for the wrong reason.
         by_id = {c.id: c for c in [chunk("a", .5, "joinder of parties"),
                                    chunk("b", .5, "time within which claims"),
                                    chunk("c", .5, "pledged thing")]}
-        rerank.score = lambda q, texts: [
-            0.70 if "claims" in t else 0.50 for t in texts]
+        rerank.score_pairs = lambda pairs: [
+            0.70 if "claims" in t else 0.50 for _, t in pairs]
         out = _rerank_clause_ids(["is there a deadline?"],
                                  [["a", "b", "c"]], by_id)
         r.append(check("an ask's candidates are reordered to answer IT",
                        out[0][0], "b"))
 
-        rerank.score = lambda q, texts: [0.5000] * len(texts)
+        # Batching must not cross-contaminate: one flat score list comes back
+        # for all clauses and has to be split at the right offsets, so each ask
+        # is ranked by ITS OWN scores. Getting the arithmetic wrong here would
+        # silently rank clause 2 by clause 1's scores — the exact failure the
+        # per-clause rerank exists to prevent.
+        calls = []
+
+        def _spy(pairs):
+            calls.append(list(pairs))
+            # clause 1 favours "b"; clause 2 favours "c".
+            return [{"a": .50, "b": .90, "c": .50}[t[-1]] if q == "one"
+                    else {"a": .50, "b": .50, "c": .90}[t[-1]]
+                    for q, t in pairs]
+
+        rerank.score_pairs = _spy
+        by_letter = {c.id: c for c in [chunk("a", .5, "chunk a"),
+                                       chunk("b", .5, "chunk b"),
+                                       chunk("c", .5, "chunk c")]}
+        out = _rerank_clause_ids(["one", "two"],
+                                 [["a", "b", "c"], ["a", "b", "c"]], by_letter)
+        r.append(check("every clause is scored in ONE batched call",
+                       len(calls), 1))
+        r.append(check("all clauses' pairs go in that call",
+                       len(calls[0]), 6))
+        r.append(check("each clause is ranked by its own slice of the scores",
+                       [out[0][0], out[1][0]], ["b", "c"]))
+
+        rerank.score_pairs = lambda pairs: [0.5000] * len(pairs)
         r.append(check("flat clause scores keep retrieval order",
                        _rerank_clause_ids(["q"], [["a", "b", "c"]], by_id),
                        [["a", "b", "c"]]))
 
-        rerank.score = lambda q, texts: None
+        rerank.score_pairs = lambda pairs: None
         r.append(check("unavailable model keeps clause order",
                        _rerank_clause_ids(["q"], [["a", "b", "c"]], by_id),
                        [["a", "b", "c"]]))
 
+        rerank.score_pairs = lambda pairs: [0.70 if "claims" in t else 0.50
+                                            for _, t in pairs]
         r.append(check("ids missing from the ranking are dropped, not crashed",
                        _rerank_clause_ids(["q"], [["a", "ghost"]], by_id),
                        [["a", "ghost"]]))
 
         # --- rerank.score itself -------------------------------------------
         rerank.score = orig_score
+        rerank.score_pairs = orig_score_pairs
         config.RERANK_ENABLED = False
         r.append(check("disabled reranking returns None",
                        rerank.score("q", ["some text"]), None))
@@ -145,6 +182,7 @@ def run() -> int:
                        True))
     finally:
         rerank.score = orig_score
+        rerank.score_pairs = orig_score_pairs
         config.RERANK_MIN_SPREAD = orig_spread
         config.RERANK_ENABLED = orig_enabled
 

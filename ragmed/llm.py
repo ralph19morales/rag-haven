@@ -35,12 +35,17 @@ def is_available() -> tuple[bool, str]:
 
 
 def generate(system: str, prompt: str, stream: bool = False,
-             max_tokens: int | None = None):
+             max_tokens: int | None = None, seed: bool = False):
     """Generate a completion. Returns a string, or a generator if stream=True.
 
     max_tokens caps the reply — used by short auxiliary calls like HyDE
     drafting, where a rambling answer wastes time and dilutes the embedding it
-    is meant to produce. Defaults to LLM_MAX_TOKENS when not given."""
+    is meant to produce. Defaults to LLM_MAX_TOKENS when not given.
+
+    seed=True pins sampling to config.LLM_SEED, making the call reproducible.
+    Used by the calls that FEED RETRIEVAL (the HyDE draft, the follow-up
+    rewrite) so the same question searches for the same thing twice — see
+    LLM_SEED. The answer itself is left unseeded."""
     client = _client()
     messages = [
         {"role": "system", "content": system},
@@ -57,6 +62,8 @@ def generate(system: str, prompt: str, stream: bool = False,
             "chat_template_kwargs": {"enable_thinking": config.LLM_ENABLE_THINKING},
         },
     )
+    if seed and config.LLM_SEED >= 0:
+        kwargs["seed"] = config.LLM_SEED
 
     if stream:
         def _gen():

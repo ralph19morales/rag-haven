@@ -601,8 +601,9 @@ later.
 A deliberate trade. Benefits: **privacy** (documents never leave the machine),
 **no API keys**, **no per-question cost**, and it works without internet once set
 up. Cost: a GPU with meaningful VRAM (vLLM), a Docker install, and Tesseract for
-OCR. On a 24GB consumer card, generation runs at ~14 tok/s — single-user
-readable speed, not interactive-fast. Embeddings and reranking still run on
+OCR. On a 24GB consumer card, generation runs at ~33 tok/s with n-gram
+speculative decoding enabled (19 tok/s without it) — a complete answer lands in
+roughly 15-25 seconds. Embeddings and reranking still run on
 CPU regardless of GPU size (see below — they're small enough that it isn't
 worth the VRAM). For legal research over sensitive or proprietary documents,
 privacy plus zero marginal cost is usually the right call — but if you are
@@ -724,10 +725,12 @@ docker run -d --name vllm --gpus all --ipc=host \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
   --model QuantTrio/Qwen3.6-27B-AWQ \
-  --max-model-len 32768 \
+  --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
   --enforce-eager \
+  --enable-prefix-caching \
+  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
@@ -799,9 +802,17 @@ without editing code, copy `.env.example` to `.env` and set it there.
   instinct for factual RAG output, greedy decoding makes Qwen3-family models
   loop on repeated tokens.
 - `LLM_MAX_TOKENS` — caps *total* generation per answer. Default `1024`.
-- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. At ~14 tok/s
-  a full answer can take over a minute; the default `openai` client timeout
+- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. Even at
+  ~33 tok/s a long answer takes ~30s, and the default `openai` client timeout
   (far shorter) would surface as a false retrieval failure.
+- `LLM_SEED` — fixed sampling seed for the two calls that feed *retrieval* (the
+  HyDE draft and the follow-up rewrite), not for the answer. Without it those
+  calls are sampled, which makes the retrieved passages themselves random:
+  measured, one unchanged question asked three times returned only 2-3 of the
+  same 10 chunks. Negative disables.
+- `HF_OFFLINE` — default `true`. Stops sentence-transformers revalidating the
+  cached embedder and reranker against huggingface.co on every process start,
+  which cost ~10s per process. Set `false` to download a new model.
 - `LLM_ENABLE_THINKING` — whether Qwen3.6 is allowed to reason before
   answering. Default `false`. Left on, it spends `LLM_MAX_TOKENS` on
   chain-of-thought and can return no content at all — see §8, Step 5.
@@ -876,10 +887,10 @@ Worth knowing before you judge the system: even on a dedicated GPU, this is
 | Metric | Value |
 |---|---|
 | Weights resident | 19.05 GiB |
-| KV cache available | 2.39 GiB (57,344 tokens) |
-| Max context per request | 16,384 (raisable to 32,768) |
-| Max concurrency @ 16K context | ~3.5× |
-| Generation throughput | ~14 tok/s |
+| KV cache available | 2.39 GiB (14,563 tokens) |
+| Max context per request | 8,192 |
+| Max concurrency @ 8K context | ~1.78× |
+| Generation throughput | ~33 tok/s (19.0 without speculative decoding) |
 | Engine init (container startup) | ~60s, one-time |
 
 A 1024-token answer (`LLM_MAX_TOKENS`, the default cap) can take over a
@@ -905,8 +916,8 @@ Levers, roughly in order of value:
 | More VRAM (32GB+) | room for a MoE-class model, longer context, more concurrency | hardware |
 | Lower `TOP_K` | less prompt to prefill | less context per answer |
 | Lower `LLM_MAX_TOKENS` | linear | shorter answers |
-| `RERANK_ENABLED=false` | ~3s | ranking quality |
-| Remove `--enforce-eager` (see §5 flags) | ~20% more throughput | 1–2 GiB of VRAM, taken straight from the KV pool |
+| `RERANK_ENABLED=false` | ~2.5s | ranking quality |
+| Remove `--enforce-eager` (see §5 flags) | ~15-20% more throughput | more VRAM than this card has: measured, CUDA graphs and the n-gram drafter cannot both fit, and the drafter is worth more |
 
 ### Don't benchmark against yourself
 The failure mode that actually bit this project, not a hypothetical one:

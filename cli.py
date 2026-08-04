@@ -77,6 +77,14 @@ def cmd_ask(args):
 def cmd_chat(args):
     if not _check_llm():
         sys.exit(1)
+    # Load the embedder and reranker before the prompt appears. They are lazy
+    # and process-cached, so otherwise the FIRST question of every session pays
+    # ~6s of model loading on top of its answer. `ask` is one-shot and cannot
+    # avoid that cost; an interactive session can, and should.
+    from ragmed import embeddings, rerank
+    with console.status("Loading models…"):
+        embeddings.warmup()
+        rerank.warmup()
     console.print(Panel.fit(
         "Interactive mode. Ask about Philippine medical law.\n"
         "Type 'exit' or Ctrl-C to quit.",

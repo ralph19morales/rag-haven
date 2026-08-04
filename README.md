@@ -102,10 +102,12 @@ docker run -d --name vllm --gpus all --ipc=host \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
   --model QuantTrio/Qwen3.6-27B-AWQ \
-  --max-model-len 32768 \
+  --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
   --enforce-eager \
+  --enable-prefix-caching \
+  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3               # see HAVEN_VLLM_MIGRATION.md for flag rationale
@@ -190,24 +192,49 @@ running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (see
 | Metric | Value |
 |---|---|
 | Weights resident | 19.05 GiB |
-| KV cache available | 2.39 GiB (57,344 tokens) |
-| Max context per request | 16,384 (raisable to 32,768) |
-| Generation throughput | ~14 tok/s |
+| KV cache available | 2.39 GiB (14,563 tokens) |
+| Max context per request | 8,192 |
+| Generation throughput | ~33 tok/s |
 
-~14 tok/s is single-user readable speed, not interactive-fast — a 1024-token
-answer can take over a minute, which is why `LLM_TIMEOUT` defaults to 180s.
-Levers, roughly in order of impact:
+End-to-end, measured on five representative questions through the full
+pipeline (`data/metrics.jsonl` holds both sides of this):
+
+| | Before | After |
+|---|---|---|
+| Mean time to a complete answer | ~50 s | **~21 s** |
+| Decode throughput | 19.0 tok/s | **33 tok/s** |
+| Model load, per process | 15.4 s | 5.6 s (and now off the first question) |
+| Retrieval, HyDE question | 14.9 s | 7.4 s |
+
+Where that came from, largest first:
+
+- **N-gram speculative decoding** (`--speculative-config`) — 1.7x on decode.
+  It works this well *because* this is RAG: the answer quotes statutory text
+  that is already in the prompt, so drafted tokens are accepted at a high rate.
+- **HyDE draft length** — the draft was writing to its 200-token cap and being
+  truncated mid-sentence. Asking for 2-3 sentences cut it to ~95 tokens and
+  halved the cost of every question that triggers it (10.5 s → ~4.8 s).
+- **`HF_OFFLINE`** — sentence-transformers revalidated both local models
+  against huggingface.co on every process start. ~10 s per process, on a system
+  that is supposed to run entirely offline.
+- **Warming models at startup** and caching the Chroma client and BM25 index
+  per process, instead of rebuilding them inside every query.
+
+Remaining levers:
 
 | Change | Effect | Costs you |
 |---|---|---|
-| More VRAM (32GB+) | Room for a MoE-class model, longer context, more concurrency | Hardware |
+| More VRAM (32GB+) | CUDA graphs *and* the drafter, longer context, real concurrency | Hardware |
+| Shorter answers (prompt or `LLM_MAX_TOKENS`) | Linear — answers run 600-900 tokens | Detail in the answer |
 | Lower `TOP_K` | Less to prefill | Less context per answer |
-| Lower `LLM_MAX_TOKENS` | Linear | Shorter answers |
-| `RERANK_ENABLED=false` | ~3s | Ranking quality |
+| `RERANK_ENABLED=false` | ~2.5 s | Ranking quality |
 
-24GB runs 27B-class dense models only with the vision encoder disabled and
-eager mode on (`--enforce-eager`, `--limit-mm-per-prompt`). Pick your quality
-floor deliberately.
+24GB runs 27B-class dense models only with the vision encoder disabled
+(`--limit-mm-per-prompt`) and eager mode on (`--enforce-eager`). Eager stays
+not for lack of trying: CUDA graphs and the speculative drafter want the same
+~1.4 GiB, and with 19.05 GiB of weights resident, enabling graphs leaves too
+little KV cache for an 8k context and the engine refuses to start. Speculative
+decoding is worth far more than graphs here, so it wins the memory.
 
 ---
 

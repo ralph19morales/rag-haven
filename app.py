@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from ragmed import config, llm, rag, vectorstore
+from ragmed import config, embeddings, llm, rag, rerank, vectorstore
 from ui.hero import scales_svg
 
 ASSISTANT = "Haven"
@@ -63,6 +63,20 @@ COMMON_QUESTIONS = [
 @st.cache_resource
 def get_collection():
     return vectorstore.get_collection()
+
+
+@st.cache_resource(show_spinner=False)
+def warm_up() -> bool:
+    """Load the embedding and reranking models when the app starts.
+
+    Both are lazy and process-cached, so without this the first person to ask a
+    question waits ~6s for them on top of their answer — the worst possible
+    moment to pay it, and the reason the first entry in metrics.jsonl showed
+    ~19s of "retrieval" for a question that actually retrieves in about 1s.
+    st.cache_resource makes this run once per server, not once per rerun."""
+    embeddings.warmup()
+    rerank.warmup()
+    return True
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -113,6 +127,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 ok, msg = llm_status()
+warm_up()
 stroke, accent, faint = theme_colors()
 
 

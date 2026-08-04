@@ -27,7 +27,8 @@ _HYDE_SYSTEM = (
     "Rules:\n"
     "1. Do NOT invent specific article, section, republic act, or G.R. "
     "numbers. Name doctrines and concepts in words instead.\n"
-    "2. 3-5 sentences. No preamble, no caveats, no bullet points.\n"
+    "2. 2-3 sentences, and stop. Lead with the terms of art — they are the "
+    "only part that does any work. No preamble, no caveats, no bullet points.\n"
     "3. This is a retrieval aid, not an answer to the user — it is never "
     "shown to anyone. Accuracy of detail does not matter; using the right "
     "TERMINOLOGY does."
@@ -63,7 +64,7 @@ def _hypothetical(question: str) -> str | None:
                        # configured LLM (ingest, tests, offline tooling).
     try:
         text = llm.generate(_HYDE_SYSTEM, question, stream=False,
-                            max_tokens=config.HYDE_MAX_TOKENS)
+                            max_tokens=config.HYDE_MAX_TOKENS, seed=True)
     except Exception:  # noqa: BLE001 - any LLM/transport failure
         return None
     text = (text or "").strip()
@@ -171,18 +172,44 @@ def _build_bm25(collection):
     return index
 
 
-def _load_bm25(collection):
-    """Load cached BM25 index, rebuilding if stale or missing."""
-    current_n = vectorstore.count(collection)
+# In-process BM25 cache. The on-disk pickle is 17MB on this corpus and takes
+# ~105ms to unpickle; `retrieve()` runs once per question, so without this the
+# whole index was rebuilt from disk on every query for the life of the process.
+# Keyed by collection size, which is the same staleness check the disk cache
+# uses — an ingest that changes the corpus invalidates both.
+_BM25_CACHE: dict | None = None
+
+
+def invalidate_bm25() -> None:
+    """Drop the in-process BM25 index so the next query rebuilds it.
+
+    Both caches are keyed by collection SIZE, which does not change when a file
+    is re-ingested with the same number of chunks — so ingest cannot rely on the
+    key to expire them and has to say so explicitly. It already deletes the
+    on-disk pickle for this reason; without this the in-memory copy would
+    outlive it and keep serving the old corpus for the rest of the process."""
+    global _BM25_CACHE
+    _BM25_CACHE = None
+
+
+def _load_bm25(collection, current_n: int | None = None):
+    """Load the BM25 index, from memory if warm, else disk, else rebuilt."""
+    global _BM25_CACHE
+    if current_n is None:
+        current_n = vectorstore.count(collection)
+    if _BM25_CACHE is not None and _BM25_CACHE.get("n") == current_n:
+        return _BM25_CACHE
     if config.BM25_PATH.exists():
         try:
             with open(config.BM25_PATH, "rb") as f:
                 index = pickle.load(f)
             if index.get("n") == current_n:
+                _BM25_CACHE = index
                 return index
         except Exception:
             pass
-    return _build_bm25(collection)
+    _BM25_CACHE = _build_bm25(collection)
+    return _BM25_CACHE
 
 
 def _dedupe_key(text: str) -> str:
@@ -302,26 +329,43 @@ def _rerank_clause_ids(clauses: list[str], clause_ids: list[list[str]],
     but it picked that ask's chunks by the same bi-encoder similarity that could
     not tell them apart — so Boston Equity arrived as its compulsory-joinder
     section and the Civil Code as its article on pledges. Scoring each
-    candidate against the ask itself puts the passage that answers it first."""
+    candidate against the ask itself puts the passage that answers it first.
+
+    Every clause's pairs go through the cross-encoder in a SINGLE batched call.
+    Scoring them clause by clause meant one sequential CPU pass per ask on top
+    of the main rerank — three passes for a two-ask question — for candidate
+    counts (10 each) far below the batch size, so most of the cost was fixed
+    per-call overhead rather than work.
+    """
     from . import rerank
 
-    out: list[list[str]] = []
+    # Collect every (clause, chunk) pair first, remembering which clause each
+    # belongs to so one flat score list can be split back apart afterwards.
+    pairs: list[tuple[str, str]] = []
+    kept_per_clause: list[list[str]] = []
     for clause, ids in zip(clauses, clause_ids):
-        texts, kept = [], []
+        kept: list[str] = []
         for cid in ids:
             r = by_id.get(cid)
             if r is not None:
                 kept.append(cid)
-                texts.append(r.text)
-        if len(kept) < 2:
+                pairs.append((clause, r.text))
+        kept_per_clause.append(kept)
+
+    scores = rerank.score_pairs(pairs) if pairs else None
+
+    out: list[list[str]] = []
+    at = 0
+    for ids, kept in zip(clause_ids, kept_per_clause):
+        chunk = scores[at:at + len(kept)] if scores is not None else None
+        at += len(kept)
+        if len(kept) < 2 or chunk is None:
             out.append(ids)
             continue
-        scores = rerank.score(clause, texts)
-        if scores is None or (max(scores) - min(scores)
-                              < config.RERANK_MIN_SPREAD):
+        if max(chunk) - min(chunk) < config.RERANK_MIN_SPREAD:
             out.append(ids)      # nothing to tell apart — keep retrieval order
             continue
-        order = sorted(range(len(kept)), key=lambda i: scores[i], reverse=True)
+        order = sorted(range(len(kept)), key=lambda i: chunk[i], reverse=True)
         out.append([kept[i] for i in order])
     return out
 
@@ -398,7 +442,8 @@ def retrieve(question: str, top_k: int | None = None,
     draft it used, the best raw similarity before and after)."""
     top_k = top_k or config.TOP_K
     collection = vectorstore.get_collection()
-    if vectorstore.count(collection) == 0:
+    n_docs = vectorstore.count(collection)   # reused by _load_bm25 below
+    if n_docs == 0:
         return []
 
     cand = config.CANDIDATE_K
@@ -501,7 +546,7 @@ def retrieve(question: str, top_k: int | None = None,
     # --- Lexical candidates ---
     # Scored over question + draft: supplying the domain terms the lay question
     # lacked is precisely what lets BM25 contribute anything at all here.
-    index = _load_bm25(collection)
+    index = _load_bm25(collection, n_docs)
     bm25 = index["bm25"]
     if bm25 is not None:
         scores = bm25.get_scores(_tokenize(lexical_query))

@@ -125,7 +125,8 @@ def contextualize(question: str, messages: list[dict]) -> str:
     user = f"Conversation so far:\n{hist}\n\nFollow-up question: {question}"
     try:
         out = llm.generate(_REWRITE_SYSTEM, user, stream=False,
-                           max_tokens=config.HISTORY_REWRITE_MAX_TOKENS)
+                           max_tokens=config.HISTORY_REWRITE_MAX_TOKENS,
+                           seed=True)
     except Exception:  # noqa: BLE001 - any LLM/transport failure
         return question
     out = (out or "").strip().strip('"').strip()

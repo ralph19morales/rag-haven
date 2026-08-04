@@ -71,12 +71,16 @@ def ingest_corpus(reset: bool = False, verbose: bool = True) -> dict:
         total_chunks += len(chunks)
         processed += 1
 
-    # Invalidate the BM25 cache so it rebuilds on next query.
+    # Invalidate the BM25 cache so it rebuilds on next query — both copies.
+    # The pickle on disk is the one that outlives this run; the in-process one
+    # matters when something ingests and then queries without restarting.
     if config.BM25_PATH.exists():
         try:
             config.BM25_PATH.unlink()
         except OSError:
             pass
+    from . import retriever  # local import: ingest must stay usable without the
+    retriever.invalidate_bm25()   # retrieval stack's heavier dependencies
 
     return {
         "files_processed": processed,

@@ -6,10 +6,21 @@ to phone home for a default model.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+
 from . import config
 
 
+@lru_cache(maxsize=1)
 def _client():
+    """The Chroma client, cached for the life of the process.
+
+    Constructing a PersistentClient re-opens the sqlite file and reloads the
+    HNSW index descriptor — measured at ~410ms here. `retriever.retrieve()`
+    calls `get_collection()` on every query, so an uncached client put that
+    410ms on the critical path of every single question. (app.py wrapped its
+    own call in st.cache_resource, but the retriever never saw that cache —
+    it calls this module directly.)"""
     import chromadb
     from chromadb.config import Settings
 
@@ -20,9 +31,9 @@ def _client():
     )
 
 
+@lru_cache(maxsize=1)
 def get_collection():
-    client = _client()
-    return client.get_or_create_collection(
+    return _client().get_or_create_collection(
         name=config.COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
@@ -35,10 +46,10 @@ def reset_collection():
         client.delete_collection(config.COLLECTION_NAME)
     except Exception:
         pass
-    return client.get_or_create_collection(
-        name=config.COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
-    )
+    # The cached handle now points at a deleted collection — every later call
+    # in this process would get a dead object back. Drop it before recreating.
+    get_collection.cache_clear()
+    return get_collection()
 
 
 def add(collection, ids, embeddings, documents, metadatas):

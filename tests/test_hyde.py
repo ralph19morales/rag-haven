@@ -92,15 +92,24 @@ def run() -> int:
         # slow and dilutes the embedding it exists to produce.
         seen = {}
 
-        def capture(system, prompt, stream=False, max_tokens=None):
+        def capture(system, prompt, stream=False, max_tokens=None, seed=False):
             seen["max_tokens"] = max_tokens
             seen["system"] = system
+            seen["seed"] = seed
             return "drafted"
 
         llm.generate = capture
         retriever._hypothetical("q")
         r.append(check("the draft is length-capped",
                        seen["max_tokens"], config.HYDE_MAX_TOKENS))
+        # The draft decides what gets SEARCHED for, so an unseeded one makes the
+        # retrieved passages themselves random — measured, one unchanged
+        # question returned only 2-3 of the same 10 chunks across three runs.
+        # Note this stub must accept `seed`: _hypothetical fails open, so a
+        # signature mismatch here is swallowed and shows up as an empty `seen`
+        # rather than as an error pointing at the cause.
+        r.append(check("the draft is seeded, so retrieval is reproducible",
+                       seen["seed"], True))
 
         # Policy guard: a fabricated "Article 2200" is a distinctive token that
         # BM25 matches hard, aiming retrieval confidently at the wrong law.

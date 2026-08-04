@@ -22,9 +22,13 @@ python -m venv .venv
 docker run -d --name vllm --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface -p 8000:8000 \
   vllm/vllm-openai:latest --model QuantTrio/Qwen3.6-27B-AWQ \
-  --max-model-len 32768 --gpu-memory-utilization 0.93 --max-num-seqs 2 \
-  --enforce-eager --limit-mm-per-prompt '{"image":0,"video":0}' \
+  --max-model-len 8192 --gpu-memory-utilization 0.93 --max-num-seqs 2 \
+  --enforce-eager --enable-prefix-caching \
+  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
+  --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 --reasoning-parser qwen3
+# Every flag here is load-bearing for latency — read "Generation speed" below
+# before changing any of them, especially --speculative-config.
 
 # Index the corpus (required before ask/chat/app.py return anything)
 python cli.py ingest            # add & update
@@ -39,7 +43,7 @@ streamlit run dashboard.py --server.port 8502   # ops dashboard: health + query 
 
 # Tests — no corpus, no LLM, no network required
 python tests/test_retrieval.py            # run a single file
-for t in tests/*.py; do python "$t"; done  # run all (164 checks across 12 files)
+for t in tests/*.py; do python "$t"; done  # run all (168 checks across 12 files)
 ```
 
 There is no lint/format/type-check tooling configured in this repo (no ruff/black/mypy config).
@@ -98,12 +102,66 @@ in both `ragmed/embeddings.py` and `ragmed/rerank.py`, on every load path includ
 claim ~93% of GPU VRAM by design (`--gpu-memory-utilization 0.93`), so anything that omits the pin
 and auto-detects CUDA will hit a `torch.OutOfMemoryError` there, not gracefully fall back.
 
-Two non-obvious sampling requirements in `ragmed/config.py` / `ragmed/llm.py`, both load-bearing:
+Three non-obvious sampling requirements in `ragmed/config.py` / `ragmed/llm.py`, all load-bearing:
 - `LLM_TEMPERATURE` must not be `0`. Greedy decoding makes Qwen3-family models loop on repeated
   tokens — the opposite of what "temperature 0 for factual RAG output" usually buys you elsewhere.
 - Thinking mode must stay off (`LLM_ENABLE_THINKING=false`, sent via `extra_body` since it isn't a
   standard OpenAI param). Left on, this reasoning model spends the token budget on chain-of-thought
   and can return empty `content`.
+- The two calls that FEED RETRIEVAL — the HyDE draft and the follow-up rewrite — pass `seed=True`
+  (`LLM_SEED`). They decide what gets *searched for*, so leaving them sampled made the retrieved
+  passages themselves random: measured, one unchanged question asked three times returned only 2-3
+  of the same 10 chunks. The answer itself is deliberately left unseeded.
+
+### Generation speed — why these vLLM flags, and what was measured
+
+Answering is dominated by decode, so the launch flags above matter more than anything in Python.
+Measured on this box (RTX 3090, i9-14900KF), real prompts, token counts taken from the server's
+`usage` block rather than by counting SSE chunks:
+
+| Config | Decode | TTFT (warm prefix) |
+|---|---|---|
+| Original (`--enforce-eager`, no prefix caching, no spec decode) | 19.0 tok/s | 1941 ms |
+| Current (adds `--enable-prefix-caching` + ngram `--speculative-config`) | **32.4 tok/s** | 623 ms |
+
+- **N-gram speculative decoding is the big one (1.7x)** and it is *specific to RAG*: the answer
+  quotes statutory text that is already in the prompt, so prompt-lookup drafts get accepted at a
+  high rate (~2.9 tokens per streamed chunk). Do not remove it to "simplify" the command.
+- **Beware benchmarking this by counting streamed chunks.** With spec decode several accepted
+  tokens arrive in one chunk, so chunk-counting reports ~16 tok/s and makes the 1.7x win look like
+  a regression. Use `stream_options={"include_usage": True}`.
+- **`--enforce-eager` stays**, despite the ~15% that CUDA graphs would add. Graphs and the ngram
+  drafter compete for the same VRAM: with 19.05 GiB of weights resident, enabling graphs left
+  0.94 GiB for KV cache against the 1.33 GiB an 8192-token context needs, and the engine refused to
+  start (tried at `--gpu-memory-utilization` 0.93, 0.95 and 0.96). It only fits if `--max-model-len`
+  drops to ~4096, which is too close to the real prompt size (~1.9k tokens + 1024 output + history)
+  to be safe. Speculative decoding is worth more than graphs, so it wins the memory.
+- `--max-model-len 8192` (was 32768) — nothing here comes near 32k, and the smaller window is what
+  leaves room for the drafter.
+- `--cuda-graph-sizes` does **not** exist in vLLM 0.26; passing it makes the container exit on an
+  argparse error that looks nothing like one.
+
+### Process-level caches — what is warm, and what invalidates it
+
+Retrieval's per-query cost used to be dominated by work that had nothing to do with the query.
+Four things are now cached per process; when changing any of them, mind the invalidation:
+
+- **HF offline mode** (`config.py`, set at import). sentence-transformers revalidates every model
+  file against huggingface.co even when fully cached — ~10s per process, on a system whose whole
+  premise is running locally. `HF_OFFLINE=true` sets `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` before
+  huggingface_hub is imported; **it must be set before that import or it is silently ignored**,
+  which is why it lives in `config.py` rather than next to the model loads. Set `HF_OFFLINE=false`
+  to download a model you have not cached yet.
+- **The embedder and reranker** (`embeddings.warmup()` / `rerank.warmup()`). Both are `lru_cache`d,
+  so whoever triggers them pays ~6s — by default the first user to ask a question. `app.py` and
+  `cli.py chat` now warm them at startup. This was the actual cause of the ~19s "retrieval" times
+  in the first `metrics.jsonl` entries: model loading, billed to retrieval.
+- **The Chroma client and collection** (`vectorstore._client` / `get_collection`, `lru_cache`d).
+  `reset_collection()` clears the collection cache — it must, or every later call in that process
+  gets a handle to a deleted collection.
+- **The BM25 index** (`retriever._BM25_CACHE`). Keyed by collection size, like the on-disk pickle.
+  Size does not change when a file is re-ingested with the same chunk count, so `ingest` calls
+  `retriever.invalidate_bm25()` explicitly as well as deleting the pickle.
 
 ### Query metrics and the ops dashboard
 

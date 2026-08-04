@@ -32,10 +32,10 @@ when sizing client appliances, not vendor estimates.
 | Weights resident | **19.05 GiB** |
 | Peak activation | 0.40 GiB |
 | KV cache available | **2.39 GiB** |
-| KV pool capacity | **57,344 tokens** |
-| Max context per request | 16,384 (raisable to 32,768) |
-| Max concurrency @ 16K | **3.5x** |
-| Generation throughput | **~14 tok/s** |
+| KV pool capacity | **14,563 tokens** (was 57,344 at `--max-model-len 32768`; the drafter and the smaller window changed the block sizing) |
+| Max context per request | 8,192 |
+| Max concurrency @ 8K | **1.78x** |
+| Generation throughput | **~33 tok/s** (19.0 before speculative decoding) |
 | Engine init time | ~60 s |
 | vLLM version | 0.26.0 |
 
@@ -91,7 +91,7 @@ strings will need to move to semantic or structural assertions.
 
 ### 3.3 Client timeout
 
-At ~14 tok/s, a 1024-token answer takes over 70 seconds. A default 30 s HTTP timeout will surface
+At ~33 tok/s a 1024-token answer still takes ~30 seconds (and it was over 70 s at the pre-speculative-decoding 19 tok/s). A default 30 s HTTP timeout will surface
 as failures that look like retrieval bugs. Set the client timeout to **180 s**.
 
 ### 3.4 `max_tokens` floor
@@ -155,10 +155,12 @@ docker run -d --name vllm --gpus all --ipc=host \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
   --model QuantTrio/Qwen3.6-27B-AWQ \
-  --max-model-len 32768 \
+  --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
   --enforce-eager \
+  --enable-prefix-caching \
+  --speculative-config '{"method":"ngram","num_speculative_tokens":5,"prompt_lookup_max":4,"prompt_lookup_min":2}' \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
@@ -171,10 +173,39 @@ docker update --restart unless-stopped vllm
 | Flag | Reason | Removable? |
 |---|---|---|
 | `--limit-mm-per-prompt '{"image":0,"video":0}'` | 27B is multimodal; the vision encoder reserves VRAM even when unused. Largest single saving. | Only if document-image ingestion is added |
-| `--enforce-eager` | Skips CUDA graph capture (~1–2 GiB). Costs ~20% throughput. | Only with more VRAM |
+| `--speculative-config '{"method":"ngram",…}'` | **1.7x decode** (19.0 → ~33 tok/s). RAG answers quote passages already in the prompt, so prompt-lookup drafts are accepted at a high rate. | No — this is the single biggest latency win |
+| `--enable-prefix-caching` | The system prompt (~480 tokens) is identical on every request and was being re-prefilled each time. Was silently `False` before. | No reason to |
+| `--enforce-eager` | Skips CUDA graph capture. Costs ~15–20% throughput — but see below: graphs do not fit alongside the drafter. | Only with more VRAM |
 | `--kv-cache-dtype fp8_e5m2` | Halves KV cache memory. `e4m3` requires Ada+ and calibration scales. | See §6 accuracy caveat |
-| `--gpu-memory-utilization 0.93` | Leaves headroom for the GNOME desktop (~562 MiB) | Raise to 0.95 if headless |
+| `--gpu-memory-utilization 0.93` | Leaves headroom for the GNOME desktop (~562 MiB) | Raising it does **not** buy enough for CUDA graphs — tested at 0.95 and 0.96 |
+| `--max-model-len 8192` | Real prompts are ~1.9k tokens + 1024 output + history. 32768 reserved KV nothing used. | Lower only with care |
 | `--max-num-seqs 2` | Concurrency traded for context on a constrained card | Raise with more VRAM |
+
+### Why `--enforce-eager` stays, despite costing ~15–20%
+
+CUDA graphs and the n-gram drafter compete for the same VRAM, and on a 24 GiB
+card with 19.05 GiB of weights resident there is only enough for one:
+
+| Attempt | KV cache available | Needed for 8192 ctx | Result |
+|---|---|---|---|
+| graphs + spec, `--max-num-seqs 8`, util 0.93 | 0.08 GiB | 1.33 GiB | engine refused to start |
+| graphs + spec, `--max-num-seqs 2`, util 0.96 | 0.94 GiB | 1.33 GiB | engine refused to start |
+| graphs + spec, `--max-num-seqs 2`, util 0.95 | 0.71 GiB | 1.33 GiB | engine refused to start |
+| **eager + spec (current)** | **2.39 GiB** | 1.33 GiB | **runs** |
+
+Graphs would fit at `--max-model-len 4096`, but that is too near the real prompt
+size to be safe once conversation history is included. Speculative decoding is
+worth ~1.7x against the graphs' ~1.15x, so it gets the memory.
+
+Two traps worth recording, both cost time here:
+
+- `--cuda-graph-sizes` **does not exist** in vLLM 0.26. Passing it makes the
+  container exit on an argparse error whose output looks nothing like one, which
+  is easy to misread as an OOM.
+- **Do not benchmark decode by counting streamed SSE chunks.** With speculative
+  decoding several accepted tokens arrive in one chunk, so chunk-counting
+  reports ~16 tok/s and makes a 1.7x speedup look like a regression. Take the
+  count from `stream_options={"include_usage": True}`.
 
 ### Health check
 
@@ -208,9 +239,13 @@ drops roughly by half; correctness takes priority in this domain.
 
 ### Throughput ceiling
 
-~14 tok/s is single-user readable speed, not interactive-fast. Removing `--enforce-eager` would
-recover ~20% but requires 1–2 GiB that would come directly out of the 2.39 GiB KV pool. Not a
-worthwhile trade on this hardware.
+~33 tok/s with n-gram speculative decoding, up from 19.0 tok/s without it — the single largest
+latency win available on this hardware, and it works this well precisely because RAG answers quote
+passages already present in the prompt.
+
+Removing `--enforce-eager` would recover a further ~15–20%, but the memory it needs comes straight
+out of the KV pool and the drafter has already claimed it; measured attempts at
+`--gpu-memory-utilization` 0.93/0.95/0.96 all failed to start. See §5 for the numbers.
 
 ### Non-determinism
 
@@ -233,7 +268,7 @@ Run the 164-test regression suite after the changes above.
 
 **Expected failures** (informative, not alarming):
 - Exact-string assertions — model changed *and* determinism was lost
-- Latency-sensitive tests — 14 tok/s vs. Ollama's previous throughput
+- Latency-sensitive tests — ~33 tok/s vs. Ollama's previous throughput
 - Any test that assumed `temperature=0`
 
 **Genuine failures** (investigate):

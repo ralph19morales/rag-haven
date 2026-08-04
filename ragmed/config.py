@@ -19,6 +19,27 @@ def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
 
+# --- Hugging Face offline mode --------------------------------------------
+# sentence-transformers revalidates every model file against huggingface.co on
+# load, even when the model is fully cached on disk. Measured here: 9.9s to load
+# bge-base and 5.6s for bge-reranker-base, against 4.1s and 1.5s with the
+# network calls skipped — roughly 10 SECONDS of pure round-trips per process,
+# on a system whose entire premise is that it runs locally. `cli.py ask` starts
+# a fresh process per question and paid it every time.
+#
+# This MUST be set before huggingface_hub is first imported: the library reads
+# the variable into a module constant at import time, so setting it later is
+# silently ignored (the same trap documented in embeddings._model). config.py is
+# imported before any model code, which is why it lives here and not there.
+#
+# setdefault, so an explicit environment value still wins. Set HF_OFFLINE=false
+# when you need to DOWNLOAD a model you have not cached yet — with it on, a
+# missing model fails to load rather than being fetched.
+if _env("HF_OFFLINE", "true").strip().lower() in {"1", "true", "yes", "on"}:
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+
 def _env_int(key: str, default: int) -> int:
     try:
         return int(os.environ.get(key, default))
@@ -171,7 +192,27 @@ HYDE_MIN_SIM = float(_env("HYDE_MIN_SIM", "0.68"))
 # two groups overlapped completely, because the weakest clause of an answerable
 # question is its narrative setup, not its question.)
 HYDE_CLAUSE_MIN_SIM = float(_env("HYDE_CLAUSE_MIN_SIM", "0.70"))
-HYDE_MAX_TOKENS = _env_int("HYDE_MAX_TOKENS", 200)  # keep the draft short
+# Keep the draft short — this is the single most expensive step in retrieval.
+# The draft is generated at ~19 tok/s, serially, before retrieval can finish, so
+# every token is ~53ms on the critical path: the old 200-token draft cost 10.5s
+# of a 50s answer, and the model wrote to the cap every time (i.e. it was being
+# truncated mid-sentence, the tell that the CAP and not the prompt was setting
+# the length).
+#
+# What actually fixed that was the prompt, not this number: `_HYDE_SYSTEM` now
+# asks for "2-3 sentences, and stop" and leads with the terms of art, which is
+# the only part that does any work — HyDE contributes domain VOCABULARY, and
+# that is front-loaded. Drafts now come back at ~70 words / ~95 tokens on their
+# own, in 4.2-5.3s. So 128 is a safety ceiling, no longer the binding
+# constraint; lowering it further would start truncating again without buying
+# anything.
+#
+# Do NOT expect to A/B this cap by comparing retrieved chunks: HyDE is sampled,
+# and the sampling noise is far larger than the cap. Measured over 3 runs of one
+# unchanged question at a FIXED cap, only 2-3 of 10 retrieved ids were stable
+# run to run. See LLM_SEED below, which is what makes that comparison possible
+# at all.
+HYDE_MAX_TOKENS = _env_int("HYDE_MAX_TOKENS", 128)
 
 # --- LLM (local, via vLLM — OpenAI-compatible API) --------------------------
 LLM_BASE_URL = _env("LLM_BASE_URL", "http://localhost:8000/v1")
@@ -191,6 +232,22 @@ LLM_TIMEOUT = _env_int("LLM_TIMEOUT", 180)
 # reasoning adds latency without adding grounding. Not a standard OpenAI
 # param — sent via extra_body in ragmed/llm.py.
 LLM_ENABLE_THINKING = _env_bool("LLM_ENABLE_THINKING", False)
+# Fixed sampling seed for the two auxiliary calls that FEED RETRIEVAL — the
+# HyDE draft and the follow-up rewrite. Not applied to the answer itself.
+#
+# Those two calls decide what gets searched for, so sampling them makes the
+# retrieved passages themselves random. Measured: asking one unchanged
+# HyDE-triggering question three times, only 2-3 of its 10 retrieved chunk ids
+# were the same across runs — so the same person asking the same thing twice was
+# shown a substantially different set of sources, with no way to tell why. It
+# also makes every retrieval change untestable, because the noise floor is
+# bigger than most effects being measured.
+#
+# A seed fixes this WITHOUT greedy decoding, which matters: temperature 0 is not
+# available to us (see LLM_TEMPERATURE — Qwen3 loops on it). Same question and
+# same corpus now give the same passages; a different question still samples
+# normally. Set LLM_SEED to a negative number to go back to unseeded drafts.
+LLM_SEED = _env_int("LLM_SEED", 1729)
 
 # --- Query metrics (for the ops dashboard, dashboard.py) -------------------
 METRICS_PATH = DATA_DIR / "metrics.jsonl"

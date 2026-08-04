@@ -65,6 +65,21 @@ def is_available() -> bool:
         return False
 
 
+def warmup() -> None:
+    """Load the cross-encoder now rather than inside the first question.
+
+    Same reasoning as `embeddings.warmup`. Failure is ignored: reranking already
+    degrades to a no-op when the model will not load, and warming up must not be
+    able to take the app down at startup for something that is optional at
+    query time."""
+    if not config.RERANK_ENABLED:
+        return
+    try:
+        _model()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _sigmoid(x: float) -> float:
     import math
 
@@ -77,16 +92,34 @@ def _sigmoid(x: float) -> float:
     return e / (1.0 + e)
 
 
-def score(query: str, texts: list[str]) -> list[float] | None:
-    """Score each text against the query. Returns None if reranking is off or
-    the model is unavailable, so callers can keep their existing ordering."""
-    if not config.RERANK_ENABLED or not texts:
+def score_pairs(pairs: list[tuple[str, str]]) -> list[float] | None:
+    """Score explicit (query, text) pairs in ONE forward pass.
+
+    The queries may differ from pair to pair, which is what lets a compound
+    question's per-clause reranking be batched: previously each clause got its
+    own `score()` call, so a two-ask question ran three sequential passes over
+    the CPU (30 pairs, then 10, then 10) and paid the fixed per-call overhead
+    three times. The cross-encoder does not care that the left side varies —
+    it encodes each pair independently regardless — so they can all go in
+    together.
+
+    Returns None if reranking is off or the model is unavailable, so callers
+    can keep their existing ordering."""
+    if not config.RERANK_ENABLED or not pairs:
         return None
     try:
         model = _model()
-        raw = model.predict([(query, t) for t in texts],
+        raw = model.predict(list(pairs),
                             batch_size=config.RERANK_BATCH_SIZE,
                             show_progress_bar=False)
     except Exception:  # noqa: BLE001 - model load or inference failure
         return None
     return [_sigmoid(float(s)) for s in raw]
+
+
+def score(query: str, texts: list[str]) -> list[float] | None:
+    """Score each text against the query. Returns None if reranking is off or
+    the model is unavailable, so callers can keep their existing ordering."""
+    if not texts:
+        return None
+    return score_pairs([(query, t) for t in texts])

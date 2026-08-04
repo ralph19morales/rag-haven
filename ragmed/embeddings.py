@@ -81,3 +81,13 @@ def embed_queries(texts: list[str]) -> list[list[float]]:
 
 def embedding_dim() -> int:
     return _model().get_sentence_embedding_dimension()
+
+
+def warmup() -> None:
+    """Load the model now rather than inside the first question.
+
+    Loading costs ~4s even offline, and lru_cache means whoever triggers it pays
+    it. Left alone that is always the first user to ask something — the one
+    moment a demo can least afford it. A long-running UI should call this at
+    startup so the cost lands before anyone is waiting on an answer."""
+    _model()
