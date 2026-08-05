@@ -28,7 +28,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ragmed import config, rerank, retriever  # noqa: E402
-from ragmed.retriever import Retrieved, _rerank, _rerank_clause_ids  # noqa: E402
+from ragmed.retriever import (Retrieved, _ensure_fused_head,  # noqa: E402
+                              _rerank, _rerank_clause_ids)
 
 
 def chunk(cid: str, score: float, text: str | None = None) -> Retrieved:
@@ -165,6 +166,37 @@ def run() -> int:
         r.append(check("ids missing from the ranking are dropped, not crashed",
                        _rerank_clause_ids(["q"], [["a", "ghost"]], by_id),
                        [["a", "ghost"]]))
+
+        # --- the fused head survives reranking ------------------------------
+        # The bug: asked why a hospital was withholding a body, hybrid fusion
+        # ranked RA 9439 (the Anti-Hospital Detention Law) THIRD and the
+        # cross-encoder demoted it to seventeenth. The prohibition never
+        # reached the prompt, the only surviving RA 9439 chunk was the IRR's
+        # list of the offence's ELEMENTS, and the model read that as a
+        # checklist of when detention is permitted — answering that a hospital
+        # may lawfully withhold a body. The exact inverse of the law.
+        fused = [chunk(c, 1.0 - i / 10) for i, c in
+                 enumerate(["a", "b", "statute", "d", "e", "f", "g"])]
+        # Reranking has shoved the statute to the back.
+        demoted = [c for c in fused if c.id != "statute"] + \
+                  [c for c in fused if c.id == "statute"]
+        r.append(check("a protected fused hit is pulled back into the top_k",
+                       ids(_ensure_fused_head(demoted, ["a", "b", "statute"],
+                                              top_k=4))[:4].count("statute"), 1))
+        r.append(check("it leads the context rather than trailing it",
+                       ids(_ensure_fused_head(demoted, ["a", "b", "statute"],
+                                              top_k=4))[0], "statute"))
+        r.append(check("nothing is dropped from the pool",
+                       len(_ensure_fused_head(demoted, ["statute"], top_k=4)),
+                       len(demoted)))
+        # Must be a FLOOR, not a reordering: anything already inside the top_k
+        # keeps the position reranking gave it.
+        r.append(check("an already-present hit is left where it is",
+                       ids(_ensure_fused_head(fused, ["a", "b"], top_k=4)),
+                       ids(fused)))
+        r.append(check("disabled by 0 protected ids",
+                       ids(_ensure_fused_head(demoted, [], top_k=4)),
+                       ids(demoted)))
 
         # --- rerank.score itself -------------------------------------------
         rerank.score = orig_score

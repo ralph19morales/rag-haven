@@ -147,6 +147,54 @@ _INLINE_LABEL = re.compile(
 _SPACE_BEFORE_PUNCT = re.compile(r"[ \t]+([,.;:!?)])")
 
 
+# A parenthetical that explains WHERE a provision was found, rather than citing
+# it. Rule 3 forbids these and does not succeed: measured after the rule was
+# added, one answer still carried "(as detailed in the implementing rules in
+# Republic Act No. 9439 source file)" and "(as referenced in Republic Act No.
+# 4226 | SECTION 17. Violations.)" — the second reproducing a "Cite as:" header
+# verbatim, pipe separator included. Same three-layer treatment as the passage
+# labels, and for the same reason: the reader never sees the prompt, so a
+# reference into it resolves to nothing.
+#
+# Deliberately narrow, because "(as cited in X)" is legitimate legal writing.
+# The parenthetical is removed only when it ALSO shows one of the two marks of
+# a leak: it names prompt scaffolding (a source file, a passage, the context,
+# a "Cite as" line, or the "|" that only ever appears in a header), or it
+# trails off on a dangling preposition, which is what a citation collapsing
+# mid-phrase looks like.
+_PROVENANCE = re.compile(
+    r"""\s*\(\s*(?:as\s+)?
+        (?:cited|detailed|referenced|quoted|stated|found|shown|listed|
+           described|provided|set\s+out|mentioned)
+        \s+(?:in|on|at|from)\b
+        (?P<body>[^)]*)
+        \)""",
+    re.IGNORECASE | re.VERBOSE,
+)
+_SCAFFOLD = re.compile(
+    r"\bsource\s+file\b|\bpassages?\b|\bcontexts?\b|\bcite\s+as\b|\|",
+    re.IGNORECASE,
+)
+_DANGLING = re.compile(r"\b(?:in|on|at|from|of|the)\s*$", re.IGNORECASE)
+
+
+def _is_leak(m: re.Match) -> bool:
+    body = m.group("body")
+    return bool(_SCAFFOLD.search(body) or _DANGLING.search(body.rstrip(" *")))
+
+
+def strip_provenance(text: str) -> str:
+    """Remove parentheticals that point INTO the prompt instead of citing.
+
+    Leaves a genuine "(as cited in <case>)" alone — only a parenthetical naming
+    prompt scaffolding, or one that trails off mid-phrase, is removed. The
+    citation itself is untouched, because it sits outside the parentheses."""
+    if not text or "(" not in text:
+        return text
+    out = _PROVENANCE.sub(lambda m: "" if _is_leak(m) else m.group(0), text)
+    return _SPACE_BEFORE_PUNCT.sub(r"\1", out) if out != text else text
+
+
 def strip_source_labels(text: str) -> str:
     """Remove prompt-internal passage labels the model used as citations.
 
@@ -184,14 +232,14 @@ def _stream_trim(token_gen):
             # Scrubbing per emitted chunk is safe because chunks are only ever
             # cut at a blank line and a passage label contains no newline, so a
             # label can never straddle the boundary.
-            chunk = strip_source_labels(buf[:idx + 2])
+            chunk = strip_provenance(strip_source_labels(buf[:idx + 2]))
             yield chunk
             if len(head) < _HEAD_WINDOW:
                 head += chunk
             emitted += len(chunk.strip())
             buf = buf[idx + 2:]
-    tail = strip_source_labels(
-        trim_trailing_caveat(buf, prior_len=emitted, head=head + buf))
+    tail = strip_provenance(strip_source_labels(
+        trim_trailing_caveat(buf, prior_len=emitted, head=head + buf)))
     if tail:
         yield tail
 
@@ -212,7 +260,10 @@ of a passage.
 3. The passages are numbered only to keep them apart. That numbering is \
 invisible to the reader, so it can never serve as a citation: never write \
 "PASSAGE 3", "Context 3", or any bare bracketed number in your answer. Cite by \
-law and section, using the "Cite as:" wording, and nothing else.
+law and section, using the "Cite as:" wording, and nothing else. Give the \
+citation and nothing about where you found it — the reader cannot see this \
+prompt, so any phrase describing how it is laid out, or trailing off into where \
+a provision was quoted from, names something that is not there.
 4. Cite Philippine authority only. Philippine decisions in the context often \
 quote or discuss foreign rulings and foreign doctrine; that material is \
 persuasive reasoning inside a Philippine ruling, not authority of its own. \
@@ -234,7 +285,17 @@ to "consult the full text".
 explain what the law says. Add a one-line note that this is legal information, \
 not legal advice, when the user seems to be asking about their own situation.
 8. Be precise and concise. Quote key statutory language when it matters.
-9. A CONVERSATION SO FAR block may appear. It is there so you can tell what a \
+9. Do not turn a description into a requirement. A provision listing the \
+elements of an offence, or the circumstances in which conduct becomes \
+unlawful, states when a duty has been BREACHED — it is not a checklist the \
+person asking must satisfy before the duty exists at all. In the same way, \
+where the context grants something in unconditional terms, do not attach to it \
+a condition taken from a different provision or a different sentence. If a \
+condition genuinely governs, quote the words that impose it and say exactly \
+what it applies to; where the context sets out both an unconditional \
+entitlement and a narrower conditional one, give the unconditional one first \
+and keep the two apart.
+10. A CONVERSATION SO FAR block may appear. It is there so you can tell what a \
 follow-up refers to and avoid repeating yourself. It is NOT a source. Never \
 cite it, never treat anything you said earlier as established law, and never \
 carry a citation forward from an earlier turn — if a provision matters to this \
@@ -360,5 +421,5 @@ def answer(question: str, top_k: int | None = None, stream: bool = False,
         _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=str(e)[:200])
         raise
     _log(generation_ms=(time.perf_counter() - gen_t0) * 1000, error=None)
-    return Answer(text=strip_source_labels(trim_trailing_caveat(text)),
-                  sources=chunks)
+    return Answer(text=strip_provenance(strip_source_labels(
+        trim_trailing_caveat(text))), sources=chunks)

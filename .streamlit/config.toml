@@ -12,83 +12,107 @@ fileWatcherType = "none"
 gatherUsageStats = false
 
 # ---------------------------------------------------------------------------
-# Theme — "gilt on blue buckram": the palette of a law-library binding.
-# Cool pearl ground, blue-black ink, slate indigo, brass reserved for warnings.
-# Matches the published field guide so the app and the docs read as one thing.
+# Theme — Haven, heads-up display.
+#
+# Haven commits to a single dark identity rather than following the reader's
+# light/dark preference, which is why the values below are repeated verbatim
+# into [theme.light] and [theme.dark]: Streamlit picks a sub-table from the
+# browser's preference, and mirroring them is what makes that choice a no-op.
+# `ui/chrome.py` therefore does not branch on theme at all.
+#
+# This IS the ops dashboard's palette now — the values mirror `ui/hud.py`, and
+# `ui/chrome.py` is built on `hud_css()` rather than beside it. The two surfaces
+# were once deliberately unlike each other; that split was removed by request.
+# This table exists so Streamlit's OWN widget chrome (buttons, alerts, the chat
+# input, code blocks) lands on the console ground instead of fighting the CSS
+# layered over it — a stock-themed widget inside a HUD reads as a half-finished
+# theme rather than a deliberate one.
+#
+# What the console palette does NOT cover, and `ui/chrome.py` handles instead:
+# the not-legal-advice panel is drawn in the ALERT hue, not the accent. Cyan is
+# the colour of everything on this page that is merely working, and the eye
+# stops reading it within seconds.
+#
+# Contrast against the #0a1119 ground, measured: text 14.1:1, dim 6.0:1, accent
+# 11.4:1, alert 6.4:1, and dark ink on a cyan button 11.4:1. Every one clears AA
+# for body text, not merely the 3:1 UI floor. `borderColor` is a hairline and is
+# exempt — it only has to suggest an edge.
 #
 # FONTS ARE THE BUILT-IN KEYWORDS ON PURPOSE. Streamlit can pull a face from
 # Google Fonts, but this app's whole premise is that nothing leaves the machine
 # at query time — a webfont request would break that, and fail offline besides.
-# Serif headings carry the legal register; the body stays sans for legibility.
 # ---------------------------------------------------------------------------
 [theme]
-font = "sans-serif"
-headingFont = "serif"
+font = "monospace"
+headingFont = "monospace"
 codeFont = "monospace"
 baseFontSize = 16
-headingFontSizes = ["30px", "23px", "19px", "16px", "14px", "13px"]
+headingFontSizes = ["30px", "22px", "18px", "16px", "14px", "13px"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
 codeFontSize = "0.84rem"
-baseRadius = "small"
-buttonRadius = "small"
+# Square corners: a console has no rounded panels, and every hand-drawn surface
+# in ui/hud.py and ui/chrome.py sets border-radius: 0.
+baseRadius = "none"
+buttonRadius = "none"
 showWidgetBorder = true
-showSidebarBorder = true
+showSidebarBorder = false
 linkUnderline = false
-# Mid-tones, so one palette stays legible on both the light and dark grounds
-# (per-mode chart palettes are not a supported config option).
-chartCategoricalColors = ["#5a6ea3", "#5a8a72", "#a8873f", "#a85f68", "#7a6d9e", "#5a95a1", "#78838f"]
+# The two categorical slots from ui/hud.py first, then muted neighbours. Status
+# hues (amber, red, green) are deliberately absent: a series drawn in one reads
+# as a warning rather than as a measure.
+chartCategoricalColors = ["#3fc0e6", "#8f78e0", "#5f9fbf", "#a88fd6", "#7fb8cc", "#6f97a8", "#4a7f96"]
 
+# --- the palette, stated once ----------------------------------------------
 [theme.light]
-primaryColor = "#38476b"            # slate indigo — 9.2:1 against white button text
-backgroundColor = "#f6f7f9"
-secondaryBackgroundColor = "#e9edf2"
-textColor = "#141922"               # blue-black — 16.4:1 on the ground
-linkColor = "#2e3c5e"
-borderColor = "#d5dae1"
-codeBackgroundColor = "#e7eaef"
-codeTextColor = "#22304d"
-dataframeBorderColor = "#d5dae1"
-dataframeHeaderBackgroundColor = "#e9edf2"
-# Semantic colours pulled toward the palette so status never shouts.
-greenColor = "#3f6b52"
-redColor = "#8c3a44"
-orangeColor = "#92742f"             # brass
-yellowColor = "#8a7326"
-blueColor = "#38476b"
-violetColor = "#5a4f7a"
-grayColor = "#616b7a"
+primaryColor = "#4fd8ff"            # cyan — the single accent
+backgroundColor = "#0a1119"
+secondaryBackgroundColor = "#0e1822"
+textColor = "#bfe4f2"
+linkColor = "#4fd8ff"
+borderColor = "#16394a"
+codeBackgroundColor = "#0e1822"
+codeTextColor = "#bfe4f2"
+dataframeBorderColor = "#16394a"
+dataframeHeaderBackgroundColor = "#0e1822"
+greenColor = "#35e0a1"
+redColor = "#ff5f6d"
+orangeColor = "#ffb648"
+yellowColor = "#ffd166"
+blueColor = "#3fc0e6"
+violetColor = "#8f78e0"
+grayColor = "#6f97a8"
 
 [theme.light.sidebar]
-backgroundColor = "#eaedf1"
-secondaryBackgroundColor = "#dfe4ea"
-codeBackgroundColor = "#dfe4ea"
-textColor = "#141922"
-borderColor = "#d5dae1"
-primaryColor = "#38476b"
+backgroundColor = "#070d13"
+secondaryBackgroundColor = "#0e1822"
+codeBackgroundColor = "#0e1822"
+textColor = "#bfe4f2"
+borderColor = "#16394a"
+primaryColor = "#4fd8ff"
 
 [theme.dark]
-primaryColor = "#5a6ea3"            # 5.0:1 against white button text
-backgroundColor = "#10151c"
-secondaryBackgroundColor = "#1a2029"
-textColor = "#e4e8ee"               # 14.9:1 on the ground
-linkColor = "#a3b6e2"
-borderColor = "#28313d"
-codeBackgroundColor = "#151b24"
-codeTextColor = "#b9cbe8"
-dataframeBorderColor = "#28313d"
-dataframeHeaderBackgroundColor = "#1a2029"
-greenColor = "#6f9e83"
-redColor = "#cf8b93"
-orangeColor = "#d0aa63"             # brass
-yellowColor = "#cbb26a"
-blueColor = "#a3b6e2"
-violetColor = "#a294c4"
-grayColor = "#8b95a3"
+primaryColor = "#4fd8ff"
+backgroundColor = "#0a1119"
+secondaryBackgroundColor = "#0e1822"
+textColor = "#bfe4f2"
+linkColor = "#4fd8ff"
+borderColor = "#16394a"
+codeBackgroundColor = "#0e1822"
+codeTextColor = "#bfe4f2"
+dataframeBorderColor = "#16394a"
+dataframeHeaderBackgroundColor = "#0e1822"
+greenColor = "#35e0a1"
+redColor = "#ff5f6d"
+orangeColor = "#ffb648"
+yellowColor = "#ffd166"
+blueColor = "#3fc0e6"
+violetColor = "#8f78e0"
+grayColor = "#6f97a8"
 
 [theme.dark.sidebar]
-backgroundColor = "#0c1116"
-secondaryBackgroundColor = "#161c25"
-codeBackgroundColor = "#151b24"
-textColor = "#e4e8ee"
-borderColor = "#28313d"
-primaryColor = "#5a6ea3"
+backgroundColor = "#070d13"
+secondaryBackgroundColor = "#0e1822"
+codeBackgroundColor = "#0e1822"
+textColor = "#bfe4f2"
+borderColor = "#16394a"
+primaryColor = "#4fd8ff"

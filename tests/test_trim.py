@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ragmed.rag import (_stream_trim, strip_source_labels,  # noqa: E402
-                        trim_trailing_caveat)
+from ragmed.rag import (_stream_trim, strip_provenance,  # noqa: E402
+                        strip_source_labels, trim_trailing_caveat)
 
 # A real refusal the system produced: it opens by naming the gap, cites what it
 # DID find, then closes by restating the gap. Nothing here may be trimmed.
@@ -168,6 +168,49 @@ def run() -> int:
                              "[Context 2] A duty exists.\n\n",
                              "[Context 4] And a second one."]))),
                          "A duty exists.\n\nAnd a second one."))
+
+    # --- provenance parentheticals ------------------------------------------
+    # The answer explaining WHERE it found a provision instead of citing it.
+    # Rule 3 forbids this and does not succeed, so this is the guarantee — the
+    # same three-layer treatment the passage labels get. Both examples below are
+    # verbatim from measured answers.
+    results.append(check(
+        "a parenthetical naming the source file is removed",
+        strip_provenance(
+            "Furthermore, **Republic Act No. 9439** (as detailed in the "
+            "implementing rules in **Republic Act No. 9439** source file) "
+            "explicitly states that detention is unlawful."),
+        "Furthermore, **Republic Act No. 9439** explicitly states that "
+        "detention is unlawful."))
+    results.append(check(
+        "a parenthetical reproducing a Cite as: header is removed",
+        strip_provenance(
+            "**Republic Act No. 4226, Sec. 17** (as referenced in **Republic "
+            "Act No. 4226 | SECTION 17. Violations.**) lists the refusal."),
+        "**Republic Act No. 4226, Sec. 17** lists the refusal."))
+    results.append(check(
+        "a parenthetical trailing off mid-phrase is removed",
+        strip_provenance("The rule (as cited in **Republic Act No. 9439** in) "
+                         "applies."),
+        "The rule applies."))
+    results.append(check(
+        "the space before punctuation is repaired after removal",
+        strip_provenance("It is unlawful (as stated in the context) ."),
+        "It is unlawful."))
+
+    # --- must NOT touch -----------------------------------------------------
+    # "(as cited in X)" is ordinary legal writing. Only a parenthetical that
+    # names prompt scaffolding, or collapses mid-phrase, is a leak.
+    keep = ("The doctrine was adopted (as cited in Ramos v. Court of Appeals) "
+            "by this Court.")
+    results.append(check("a genuine case parenthetical is preserved",
+                         strip_provenance(keep), keep))
+    keep2 = "Detention is unlawful in the case of a deceased patient."
+    results.append(check("ordinary prose is untouched",
+                         strip_provenance(keep2), keep2))
+    results.append(check("empty input is handled", strip_provenance(""), ""))
+    results.append(check("text with no parenthesis is returned as-is",
+                         strip_provenance("No parens here."), "No parens here."))
 
     failed = results.count(False)
     print(f"\n{len(results) - failed}/{len(results)} passed")

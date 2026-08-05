@@ -30,3 +30,4 @@ Thumbs.db
 # to be shared, so it is deliberately not ignored here.
 .claude/settings.local.json
 .claude/settings.local.json.bak
+evals/bench_*.json

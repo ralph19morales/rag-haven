@@ -83,6 +83,25 @@ def run() -> int:
     r.append(check("still keeps the legal-information-not-advice note",
                    "not legal advice" in P))
 
+    # The deceased-body answer said a hospital cannot detain a body "provided
+    # you execute a promissory note". The law is the other way round: a relative
+    # who REFUSES to sign may still claim the body and the interment documents.
+    # The model had been handed the IRR's list of the ELEMENTS OF THE OFFENCE
+    # and read it as a checklist of preconditions on the family. Stated
+    # behaviourally, with no example to parrot.
+    r.append(check("prompt separates a description of a breach from a "
+                   "requirement on the reader",
+                   "elements of an offence" in P and "checklist" in P))
+    r.append(check("prompt forbids importing a condition onto an "
+                   "unconditional entitlement",
+                   "unconditional" in P and "different provision" in P))
+
+    # "(as cited in **Republic Act No. 9439** in)" — the answer describing the
+    # prompt's own scaffolding, and trailing off. Same family as the leaked
+    # passage labels: it names something the reader cannot see.
+    r.append(check("prompt forbids describing where a citation came from",
+                   "nothing about where you found it" in P))
+
     failed = r.count(False)
     print(f"\n{len(r) - failed}/{len(r)} passed")
     return 1 if failed else 0

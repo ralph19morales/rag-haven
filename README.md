@@ -21,7 +21,7 @@ store, and a local LLM. No API keys, no per-question cost.
 ## Interfaces
 
 **`Haven`** — a web app for non-technical users. Opens with a greeting, offers
-common situations to start from ("The hospital won't release my father's body
+common situations to start from ("The hospital won't release my relative's body
 until we pay"), and presents sources in plain language.
 
 ```bash
@@ -313,8 +313,10 @@ can trust:
 |---|---|
 | `ragmed/` | The engine — config, loaders, OCR, chunking, embeddings, vector store, retrieval, reranking, conversation memory, prompting, query-metrics logging |
 | `fetch/` | Source fetcher, curated seed lists, the Rules-of-Court splitter |
-| `ui/` | Inline SVG/CSS chrome. `hero.py` and `thinking.py` are Haven's hero mark and waiting animation; `hud.py` is the ops dashboard's heads-up display — a deliberately different register for a different audience |
-| `tests/` | 164 regression checks |
+| `evals/` | Measurements of the running system — retrieval authority, answer quality, LLM throughput. Needs the index and models, so deliberately outside `tests/` (see `evals/README.md`) |
+| `WORKLOG.md` | Session handoff: current state, open items, traps found |
+| `ui/` | Inline SVG/CSS chrome. `hud.py` is the heads-up display both surfaces are drawn in; `chrome.py` is Haven's layer on top of it; `robot.py` is the animated mark, idling on the hero and working during a wait |
+| `tests/` | 308 regression checks |
 | `cli.py` / `app.py` / `dashboard.py` | Command line / Haven web app / ops dashboard |
 | `GUIDE.md` | Full explainer: how it works and what went wrong |
 | `corpus/`, `data/` | Documents, index, and query-metrics log — all git-ignored; `corpus/`/`data/chroma`/`data/bm25.pkl` are regenerable, `data/metrics.jsonl` is operational history and is not |

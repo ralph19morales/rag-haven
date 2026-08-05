@@ -135,10 +135,87 @@ def _split_on_sections(text: str) -> list[str]:
     return units
 
 
+# A sentence end it is safe to break a chunk after. The negative lookbehinds
+# stop a legal abbreviation's period ("Sec. 2", "No. 9439", "Art. 5") from
+# posing as one — the same guard, for the same reason, as rag._BOUNDARY.
+#
+# `(?<![A-Z])` covers the initial-shaped abbreviations in one stroke — "R.A.",
+# "G.R.", "P.D.", "B.P." — which the word-shaped lookbehinds cannot reach, since
+# the character before that period is a lone capital. It also declines to break
+# after a trailing acronym ("...issued by the DOH."), which is a real but cheap
+# loss: the splitter simply takes the previous sentence end instead.
+_SENTENCE_END = re.compile(
+    r"(?<!\bNo)(?<!\bNos)(?<!\bSec)(?<!\bSecs)(?<!\bArt)(?<!\bArts)"
+    r"(?<!\bpar)(?<!\bpars)(?<!\bInc)(?<!\bv)(?<![A-Z])"
+    r"\.\s")
+
+# Where to prefer breaking an oversized unit, best first. A paragraph break is
+# worth more than a line break, and a line break more than a sentence end.
+_PARA_BREAK = re.compile(r"\n\s*\n")
+_LINE_BREAK = re.compile(r"\n")
+
+
+def _split_point(unit: str, start: int, size: int) -> int:
+    """Absolute, exclusive index at which to end the piece beginning at `start`.
+
+    Prefers the last paragraph break before the size limit, then the last line
+    break, then the last sentence end, then the last space — and only cuts at
+    the raw offset when the text offers no break at all.
+
+    Why this exists: `_split_on_sections` returns the WHOLE document as one unit
+    whenever a file's headings do not match SECTION_RE, and DOH/PRC issuances
+    ("I. Rationale", "B. Specific Guidelines", "1.", "2.") and Supreme Court
+    decisions mostly do not. Those documents were therefore sliced at blind
+    character offsets — 632 chunks across 19 files on this corpus, including all
+    175 chunks of the landmark informed-consent case. The cuts landed mid-word
+    ("…who refuse to execute a promisso", "Detention occ|urs when…"), which
+    costs twice over: the fragment is unreadable if it reaches the prompt, and
+    the chunk's embedding is diluted by whatever unrelated material the window
+    happened to scoop up on either side. That dilution is what kept the
+    operative sentence of DOH AO 2008-0001 out of the top_k while the elements
+    list from the same file got in.
+
+    The floor at half `size` keeps a break from producing a runt chunk; without
+    it an early paragraph break would be preferred over a good later one."""
+    hard = start + size
+    if hard >= len(unit):
+        return len(unit)
+    floor = start + max(1, size // 2)      # never produce a piece under half size
+    for pat in (_PARA_BREAK, _LINE_BREAK, _SENTENCE_END):
+        last = None
+        for m in pat.finditer(unit, floor, hard):
+            last = m
+        if last is not None:
+            return last.end()
+    cut = unit.rfind(" ", floor, hard)
+    return cut + 1 if cut != -1 else hard
+
+
+def _snap_start(unit: str, pos: int) -> int:
+    """Move a piece's start forward to the next word boundary.
+
+    The overlap rewind (`end - overlap`) is plain arithmetic and lands wherever
+    it lands — which is mid-word about as often as not, reintroducing at the
+    START of a chunk exactly the severed word `_split_point` removes from its
+    end. Snapping FORWARD rather than back is deliberate: it can only increase
+    `pos`, so the packing loop is still guaranteed to make progress."""
+    if pos <= 0 or pos >= len(unit):
+        return pos
+    if unit[pos - 1].isspace() or unit[pos].isspace():
+        return pos
+    nxt = pos
+    while nxt < len(unit) and not unit[nxt].isspace():
+        nxt += 1
+    while nxt < len(unit) and unit[nxt].isspace():
+        nxt += 1
+    return nxt
+
+
 def _pack(units: list[str], size: int, overlap: int) -> list[tuple[str, str | None]]:
     """Pack section-units into ~size chunks, remembering each unit's section.
 
-    Returns list of (chunk_text, section_label). Oversized units are hard-split.
+    Returns list of (chunk_text, section_label). Oversized units are split at
+    the nearest real text boundary — see `_split_point`.
     """
     out: list[tuple[str, str | None]] = []
     buf = ""
@@ -153,14 +230,22 @@ def _pack(units: list[str], size: int, overlap: int) -> list[tuple[str, str | No
     for unit in units:
         label = _current_section_label(unit)
 
-        # A single unit larger than `size`: split it with char overlap.
+        # A single unit larger than `size`: split it at text boundaries, with
+        # overlap. `end` is chosen by _split_point rather than by arithmetic, so
+        # the advance has to be derived from it — and forced to make progress,
+        # since a break found at or before `start + overlap` would otherwise
+        # rewind and loop forever.
         if len(unit) > size:
             flush()
             start = 0
             while start < len(unit):
-                piece = unit[start : start + size]
-                out.append((piece.strip(), label))
-                start += size - overlap
+                end = _split_point(unit, start, size)
+                piece = unit[start:end].strip()
+                if piece:
+                    out.append((piece, label))
+                if end >= len(unit):
+                    break
+                start = _snap_start(unit, max(end - overlap, start + 1))
             continue
 
         if len(buf) + len(unit) + 1 > size:

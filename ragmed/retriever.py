@@ -94,6 +94,52 @@ def _split_clauses(question: str) -> list[str]:
     return parts
 
 
+# Sentences addressed to the ASSISTANT rather than describing the problem:
+# "Check what philippine law is saying about this", "Tell me what the law says
+# about that". People append these constantly, and they are pure noise for
+# retrieval — no retrievable content, but they still shift the query embedding.
+#
+# Measured: appending exactly that one sentence to the deceased-body question
+# pulled the Revised Penal Code to fused rank 2 (its Art. 85 concerns the corpse
+# of an EXECUTED person) and pushed RA 9439 — the whole answer — out of the
+# top_k entirely. Haven then refused, saying the issue was "not covered", while
+# the controlling statute sat in the index. Worse, `_ensure_fused_head` then
+# faithfully protected the wrong document, because by then the wrong document
+# was genuinely in the fused head.
+_META_LEAD = re.compile(
+    r"^\s*(?:please\s+)?(?:can you\s+|could you\s+|kindly\s+)?"
+    r"(?:check|tell me|explain|show me|find|search|look\s*up|give me|answer|"
+    r"elaborate|expand|verify|confirm|research|describe|clarify)\b",
+    re.IGNORECASE,
+)
+# Deliberately narrow: the sentence must ALSO end on a deictic with no subject
+# of its own. "Explain informed consent" leads the same way and carries the
+# entire question, so it must survive — the test is what the sentence ends on,
+# not how it starts.
+_ENDS_DEICTIC = re.compile(r"\b(?:this|that|it|these|those|them)\b[\s.?!]*$",
+                           re.IGNORECASE)
+
+
+def _strip_meta_sentences(question: str) -> str:
+    """Drop assistant-directed filler from the text used to SEARCH.
+
+    The user still sees, and the model still answers, their original wording —
+    this only shapes the query, the same separation the HyDE draft and the
+    follow-up rewrite already use.
+
+    Never strips everything: if removing the meta sentences would leave nothing
+    with content, the original is searched unchanged. A query made worse is
+    recoverable; a query made empty is not."""
+    parts = re.split(r"(?<=[.?!])\s+", question.strip())
+    if len(parts) < 2:
+        return question
+    kept = [p for p in parts
+            if not (_META_LEAD.match(p) and _ENDS_DEICTIC.search(p))]
+    if not kept or not any(len(p.split()) >= 3 for p in kept):
+        return question
+    return " ".join(kept)
+
+
 def _ask_clauses(question: str) -> list[str]:
     """The clauses worth scoring for coverage: the ones actually ASKING.
 
@@ -241,6 +287,60 @@ def _dedupe(results: list["Retrieved"]) -> list["Retrieved"]:
     return out
 
 
+def source_family(source: str) -> str:
+    """The corpus family a chunk belongs to: lawphil, jurisprudence, doh, prc,
+    billing, statutes. Derived from the path convention the fetchers write
+    (`_fetched/<family>/...`, or the top-level directory for hand-added files).
+
+    Shared with dashboard.py so the two cannot drift apart on what a "family"
+    means — the ops view groups the index by exactly this key."""
+    parts = source.split("/")
+    if source.startswith("_fetched/") and len(parts) > 1:
+        return parts[1]
+    return parts[0] or "other"
+
+
+def _cap_per_family(results: list["Retrieved"], cap: int,
+                    top_k: int) -> list["Retrieved"]:
+    """Limit how many chunks any one corpus FAMILY may take in the top_k.
+
+    `_cap_per_source` caps a single FILE, which is not the same constraint: on
+    the deceased-body question the top_k held four jurisprudence chunks from
+    three different case files, so the per-source cap was satisfied while case
+    law still owned two thirds of the context. The statute and its IRR answer
+    that question together — the prohibition in one, the interment and document
+    rules in the other — and there was no room for both.
+
+    Same demote-don't-drop semantics as the per-source cap: overflow backfills
+    once every family has had its share, so a question only one family answers
+    (informed consent is pure jurisprudence) still gets a full context. The cap
+    changes the ORDER of the top_k, never its size.
+
+    Demoted means demoted, not deleted: the overflow is returned as a TAIL
+    rather than truncated at top_k. `top_k` is therefore only the point the
+    backfill has to reach, not the length of the result. This matters because
+    two stages downstream — `_ensure_clause_coverage` and `_ensure_fused_head` —
+    can only promote a chunk they can still see. Truncating here silently
+    disarmed the fused-head guarantee: on the deceased-body question it
+    protected three chunks and delivered one, because the other two had already
+    been dropped by this function and `_ensure_fused_head` had nothing to
+    promote. A guarantee that runs after a filter must be given the filter's
+    leavings, or it is not a guarantee."""
+    if cap <= 0:
+        return results
+    kept: list["Retrieved"] = []
+    overflow: list["Retrieved"] = []
+    seen: dict[str, int] = {}
+    for r in results:
+        fam = source_family(r.metadata.get("source", ""))
+        if seen.get(fam, 0) < cap:
+            seen[fam] = seen.get(fam, 0) + 1
+            kept.append(r)
+        else:
+            overflow.append(r)
+    return kept + overflow
+
+
 def _cap_per_source(results: list["Retrieved"], cap: int,
                     top_k: int) -> list["Retrieved"]:
     """Limit how many chunks any single source file may take in the top_k.
@@ -257,7 +357,9 @@ def _cap_per_source(results: list["Retrieved"], cap: int,
     (a single statute's licensing procedure, say) must still fill its context,
     so once every source has had its `cap`, the held-back chunks backfill in
     score order. The cap therefore changes the ORDER of the top_k, never its
-    size.
+    size. As in `_cap_per_family`, the overflow is returned as a tail rather
+    than truncated at top_k, so the stages that run after this one can still
+    promote from it.
 
     Assumes `results` is already sorted best-first; the kept chunk for each
     source is thus always its highest-scoring one."""
@@ -275,9 +377,7 @@ def _cap_per_source(results: list["Retrieved"], cap: int,
         else:
             overflow.append(r)
 
-    if len(kept) < top_k:
-        kept.extend(overflow[: top_k - len(kept)])
-    return kept
+    return kept + overflow
 
 
 def _rerank(query: str, results: list["Retrieved"],
@@ -393,7 +493,13 @@ def _ensure_clause_coverage(ranked: list["Retrieved"],
 
     `clause_ids` holds each clause's hits best-first for THAT clause. Ids absent
     from `ranked` (dropped as duplicates or by the per-source cap) are skipped
-    rather than resurrected — those filters exist for their own good reasons."""
+    rather than resurrected — those filters exist for their own good reasons.
+
+    The unselected remainder is returned BEHIND the selection rather than
+    dropped, for the same reason the two caps keep their overflow:
+    `_ensure_fused_head` runs after this and can only promote a chunk it can
+    still see. The top_k itself is unaffected — it is the tail beyond it that
+    now survives."""
     if not clause_ids or min_per_clause <= 0 or len(clause_ids) < 2:
         return ranked
 
@@ -422,7 +528,64 @@ def _ensure_clause_coverage(ranked: list["Retrieved"],
         selected.append(r)
 
     selected.sort(key=lambda r: r.score, reverse=True)
-    return selected
+    return selected + [r for r in ranked if r.id not in seen]
+
+
+def _ensure_fused_head(selected: list["Retrieved"],
+                       protected: list[str], top_k: int) -> list["Retrieved"]:
+    """Guarantee the fused ranking's strongest hits a place in the top_k.
+
+    The reranker reorders; it does not get to overrule. It is measurably better
+    than the bi-encoder at "right document, wrong chunk", and measurably worse
+    on terse statutory text matched against a lay narrative — four lines of
+    legislative prohibition read as less responsive than pages of judicial
+    discussion of the same facts. Asked why a hospital was holding a body, the
+    fused ranking put RA 9439 third and the cross-encoder pushed it to
+    seventeenth, so the prohibition never reached the prompt and the answer
+    inverted the law.
+
+    Same shape of remedy as `_ensure_clause_coverage`, for the same reason:
+    when two signals disagree and each is right in a different regime, tuning
+    their scores against one another fits the last example you looked at.
+    Reserving capacity is a mechanism instead.
+
+    Protected chunks displace the LOWEST-ranked occupants of the top_k, and are
+    inserted in fused order at the front — the operative provision should lead
+    the context, not trail it. Anything already present keeps its place rather
+    than being moved up, so this is a floor and not a reordering.
+
+    The occupants it displaces are the lowest-ranked UNPROTECTED ones. That
+    qualifier is load-bearing and was missing: promoting one protected chunk
+    used to push a different protected chunk straight out of the top_k, so with
+    three protected the function could deliver two — spending the guarantee on
+    itself. Whatever it evicts must be something it was not asked to keep."""
+    if not protected or top_k <= 0:
+        return selected
+
+    protected_set = set(protected)
+    present = {r.id for r in selected[:top_k]}
+    missing = [r for r in selected if r.id in protected_set and r.id not in present]
+    if not missing:
+        return selected
+    # Keep fused order among the promoted ones.
+    order = {cid: i for i, cid in enumerate(protected)}
+    missing.sort(key=lambda r: order.get(r.id, len(order)))
+    missing = missing[:top_k]
+
+    promoted_ids = {r.id for r in missing}
+    rest = [r for r in selected if r.id not in promoted_ids]
+    slots = max(0, top_k - len(missing))
+    # Protected occupants are kept regardless of where they sit; the remaining
+    # slots go to the best-ranked unprotected ones. Membership is decided first
+    # and the order of `rest` is then replayed, so survivors keep their relative
+    # positions and this stays a floor rather than a re-sort.
+    still_protected = [r for r in rest if r.id in protected_set]
+    unprotected = [r for r in rest if r.id not in protected_set]
+    keep = ({r.id for r in still_protected}
+            | {r.id for r in unprotected[: max(0, slots - len(still_protected))]})
+    head = [r for r in rest if r.id in keep]
+    tail = [r for r in rest if r.id not in keep]
+    return missing + head + tail
 
 
 def _minmax(scores: list[float]) -> list[float]:
@@ -441,6 +604,9 @@ def retrieve(question: str, top_k: int | None = None,
     Pass a dict as `debug` to receive diagnostics (whether HyDE fired, the
     draft it used, the best raw similarity before and after)."""
     top_k = top_k or config.TOP_K
+    # Shape the SEARCH text only — callers keep their original wording for the
+    # prompt, so the answer stays in the user's own framing.
+    question = _strip_meta_sentences(question)
     collection = vectorstore.get_collection()
     n_docs = vectorstore.count(collection)   # reused by _load_bm25 below
     if n_docs == 0:
@@ -594,8 +760,14 @@ def retrieve(question: str, top_k: int | None = None,
         by_id = {r.id: r for r in reranked}
         clause_ids = _rerank_clause_ids(clauses, clause_ids, by_id)
     capped = _cap_per_source(reranked, config.MAX_CHUNKS_PER_SOURCE, top_k)
+    capped = _cap_per_family(capped, config.MAX_CHUNKS_PER_FAMILY, top_k)
     covered = _ensure_clause_coverage(capped, clause_ids, top_k,
                                       config.MIN_CHUNKS_PER_CLAUSE)
+    # Last, deliberately: the fused head is a floor on the final selection, so
+    # it has to be applied after every stage that could have displaced it —
+    # reranking, the per-source cap and clause reservation alike.
+    covered = _ensure_fused_head(
+        covered, [r.id for r in deduped[:config.RERANK_PROTECT_TOP]], top_k)
     if debug is not None:
         debug["sources_in_top_k"] = len(
             {r.metadata.get("source", "?") for r in covered[:top_k]})

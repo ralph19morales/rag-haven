@@ -6,7 +6,7 @@ law. This module is the opposite on purpose, and it is scoped to `dashboard.py`
 alone, whose audience is the person operating the box. A status console is the
 one surface where a glowing readout is the *right* register — it is read at a
 glance, from a distance, to answer "is anything wrong", and that is a different
-job from "what does the law say about my father's body".
+job from "what does the law say about my relative's body".
 
 Same hard constraints as the rest of the UI:
   * nothing leaves the machine — no webfonts, no CDN, no remote assets. Every
@@ -46,6 +46,66 @@ GOOD = "#35e0a1"
 MONO = ('"Cascadia Mono",ui-monospace,SFMono-Regular,Consolas,'
         '"Liberation Mono",monospace')
 
+# --- categorical series colours, for the plotted charts only ----------------
+# The palette above is CHROME: one accent plus three status hues. A chart that
+# draws two measures at once needs two colours that mean "this series" rather
+# than "this state", and the status hues are reserved — an amber line would read
+# as a warning. So these two slots exist, assigned in fixed order and never
+# cycled; a third measure gets its own chart, not a third hue.
+#
+# Chosen by running the six computable checks rather than by eye, against this
+# page's own surface (INK_2), adjacent-pair mode:
+#
+#   CVD separation (min protan/deutan)   ΔE 12.9   (target >= 8)
+#   Normal-vision floor                  ΔE 19.5   (hard floor 15)
+#   Chroma floor                         both >= 0.10
+#   Contrast vs INK_2                    8.4:1 and 5.1:1  (min 3:1)
+#   Lightness band (dark)                SERIES_1 L=0.75 — 0.08 OVER the 0.67 ceiling
+#
+# That last one is a deliberate, recorded deviation, not an oversight. The dark
+# band is calibrated for a conventional dark-grey chart surface (#1a1a19); this
+# page's ground is near-black, and the band's UPPER bound exists to stop a mark
+# blowing out against a lighter grey. Against INK_2 the contrast check — which
+# is the functional test — passes with room to spare, and a mark dimmed into the
+# band reads as muddy next to the surrounding cyan chrome. Every other check
+# passes outright. If the HUD ground is ever lightened, re-run the checks.
+SERIES_1 = "#3fc0e6"        # slot 1 — retrieval, volume, the primary measure
+SERIES_2 = "#8f78e0"        # slot 2 — generation
+SERIES = (SERIES_1, SERIES_2)
+
+
+def chart_theme() -> dict:
+    """Vega-Lite config that puts an Altair chart on the HUD's ground.
+
+    Streamlit's built-in `st.line_chart`/`st.bar_chart` render with the stock
+    theme, which on this page reads as a white report card dropped onto a status
+    console. These charts are real Vega-Lite components rather than sanitised
+    HTML, so — unlike everything routed through `ui/svg.py` — they can carry the
+    hover layer a chart is supposed to have."""
+    axis = {
+        "labelFont": MONO, "titleFont": MONO,
+        "labelFontSize": 10, "titleFontSize": 10,
+        "labelColor": TEXT_DIM, "titleColor": TEXT_DIM,
+        "domainColor": LINE, "tickColor": LINE,
+        "gridColor": CYAN_GHOST, "gridOpacity": 0.55, "titlePadding": 8,
+    }
+    return {
+        "background": "transparent",
+        "view": {"stroke": "transparent"},
+        "axis": axis,
+        "axisX": dict(axis, grid=False),
+        "legend": {
+            "labelFont": MONO, "titleFont": MONO,
+            "labelFontSize": 10, "titleFontSize": 10,
+            "labelColor": TEXT, "titleColor": TEXT_DIM,
+            "symbolStrokeWidth": 3, "orient": "top", "direction": "horizontal",
+            "offset": 4,
+        },
+        "range": {"category": list(SERIES)},
+        "title": {"font": MONO, "color": TEXT_DIM, "fontSize": 11,
+                  "fontWeight": "normal", "anchor": "start"},
+    }
+
 
 def _c(state: str) -> str:
     """Accent colour for a state word."""
@@ -78,6 +138,39 @@ def hud_css() -> str:
   .stApp > * {{ position: relative; z-index: 1; }}
 
   html, body, .stApp, [class*="st-"] {{ font-family: {MONO}; }}
+  /* ...but NEVER the icon font. Streamlit draws every `:material/…:` icon as a
+     LIGATURE in "Material Symbols Rounded" — the element's text content is the
+     literal string `smart_toy`, and the font is what turns it into a glyph. The
+     rule above matches those spans (their emotion classes start `st-`), so
+     overriding the family printed the ligature names as words: `smart_toy` on
+     every assistant avatar, `keyboard_double_arrow_right` on the sidebar
+     toggle, `menu_book` on the sources expander. The avatars made it look like
+     coloured blocks of text because Streamlit gives them a filled background.
+     Restoring the family here is what keeps them glyphs. Any new selector that
+     sets a font family broadly must be added to the exclusion below.
+
+     Matched by SHAPE, not by enumeration. The icon component defaults to
+     `data-testid="stIconMaterial"` but takes an override, and the overrides are
+     scattered (`stExpanderIconError`, `stFileChipIconSpinner`,
+     `stAlertDynamicIcon`, `stToastDynamicIcon`, `stElementToolbarButtonIcon`…).
+     A hand-listed set missed the expander's chevron neighbours and left
+     `keyboard_arrow_right` printing in the sidebar. `$="Icon"` plus the two
+     prefixes below cover every icon testid in the shipped bundle.
+
+     The monospace fallback after the symbol font is deliberate: font fallback
+     is per-glyph, so a `stAlertDynamicIcon` carrying an EMOJI rather than a
+     ligature still resolves — the symbol font simply has no glyph for it and
+     the next family answers. */
+  [data-testid="stIconMaterial"],
+  [data-testid$="Icon"],
+  [data-testid^="stExpanderIcon"],
+  [data-testid^="stFileChipIcon"],
+  [data-testid^="stChatMessageAvatar"],
+  [data-testid^="stChatMessageAvatar"] *,
+  span[class*="material-symbols"] {{
+    font-family: "Material Symbols Rounded", {MONO} !important;
+    font-feature-settings: "liga";
+  }}
   h1, h2, h3, h4, h5, h6 {{
     font-family: {MONO} !important;
     text-transform: uppercase; letter-spacing: .16em;
@@ -273,21 +366,18 @@ def reactor(frac: float, big: str, small: str, caption: str,
     )
 
 
-def neutron(ok: bool, label: str) -> str:
-    """An orbiting nucleus that states the overall verdict by colour.
+def nucleus(col: str, label: str) -> str:
+    """An orbiting nucleus in `col`, captioned in words underneath.
 
-    Fills the column under the reactor, and earns the space: it is the element
-    that answers "is anything wrong" from across the room, before a single
-    label has been read. Green orbits mean every check passed, red means at
-    least one did not.
+    The drawing only. What it MEANS is the caller's business — `neutron()` uses
+    it to carry the dashboard's overall verdict, and Haven uses it as the mark
+    for "starting up" while the models load. Extracted rather than copied: two
+    versions of an animation this fiddly is how the two surfaces drift apart.
 
-    Colour is never the ONLY carrier. The caption under it says the verdict in
-    words, the banner repeats it, and each failing check prints a plain-text
-    error further down. That matters beyond pedantry: red/green is exactly the
-    pair the commonest colour-vision deficiencies confuse, so an operator who
-    cannot separate those hues still gets the answer from the text.
+    Whatever the caller uses it for, the caption is the carrier and the colour
+    is not: an <img> has no text a screen reader can reach, and red/green is
+    exactly the pair the commonest colour-vision deficiencies confuse.
     """
-    col = GOOD if ok else ALERT
     rings = ""
     for rot, dur, cls in ((0, 7.5, "a"), (60, 9.5, "b"), (120, 11.5, "a")):
         # Nested groups: a CSS transform REPLACES the SVG presentation
@@ -334,6 +424,21 @@ def neutron(ok: bool, label: str) -> str:
     )
 
 
+def neutron(ok: bool, label: str) -> str:
+    """The nucleus, carrying the dashboard's overall verdict by colour.
+
+    Fills the column under the reactor, and earns the space: it is the element
+    that answers "is anything wrong" from across the room, before a single
+    label has been read. Green orbits mean every check passed, red means at
+    least one did not.
+
+    Colour is never the ONLY carrier. The caption under it says the verdict in
+    words, the banner repeats it, and each failing check prints a plain-text
+    error further down.
+    """
+    return nucleus(GOOD if ok else ALERT, label)
+
+
 def rows(items: list[tuple[str, str, str]]) -> str:
     """Key / value / state triples as HUD readout lines."""
     out = []
@@ -361,32 +466,102 @@ def panel(title: str, body: str, scan: bool = False) -> str:
             f'<div class="hud-title">{html.escape(title)}</div>{body}</div>')
 
 
+# A sparkline is drawn into a box far wider than it is tall and then stretched
+# to the panel width, so the horizontal scale factor is several times the
+# vertical one. Three consequences, all of which were visible in the first
+# version and are handled below:
+#
+#  * `preserveAspectRatio="none"` scales the STROKE with the geometry, so a
+#    nominally 1.4px line came out thin on the verticals and fat on the
+#    horizontals. `vector-effect="non-scaling-stroke"` keeps the stroke at its
+#    literal width whatever the box does to the path. The viewBox is also much
+#    wider now, so the residual distortion of the shape itself is small.
+#  * Min-max normalising to the series' OWN range gives a flat series full
+#    amplitude: 41.2s → 41.4s over ten queries drew as a mountain range. The
+#    flat guard below keeps a series whose spread is negligible against its own
+#    magnitude drawn flat, which is what it is.
+#  * The reading has no axis and cannot have a tooltip — a data-URI <img> takes
+#    no hover, so the usual interactive layer is unavailable here by
+#    construction (see ui/svg.py). Scale is therefore direct-labelled instead:
+#    min and max sit at the ends and the latest sample carries a dot.
+_SPARK_W, _SPARK_H = 320.0, 46.0
+_SPARK_PAD = 7.0            # top/bottom room for the stroke and the end dot
+_FLAT_REL = 0.02            # spread under 2% of |median| is noise, not shape
+
+
 def sparkline(values: list[float], label: str, value: str,
-              state: str = "ok") -> str:
-    """A trace of recent values. Purely indicative — the number beside it is
-    the reading, so this stays legible even when the series is too short or
-    too flat to have a shape."""
+              state: str = "ok", unit: str = "") -> str:
+    """A trace of recent values, direct-labelled with its own vertical range.
+
+    The number beside the label is the reading; this shows its shape over time.
+    Stays legible when the series is too short or too flat to have one."""
     col = _c(state)
-    vs = [v for v in values if v is not None][-40:]
-    body = ""
-    if len(vs) >= 2:
-        lo, hi = min(vs), max(vs)
-        rng = (hi - lo) or 1.0
-        step = 100 / (len(vs) - 1)
-        pts = " ".join(f"{i * step:.2f},{26 - (v - lo) / rng * 22:.2f}"
-                       for i, v in enumerate(vs))
-        # Also an <img>: a bare <svg> here is stripped exactly like the gauges
-        # were, leaving a labelled row with nothing under it.
-        spark = (f'<svg xmlns="http://www.w3.org/2000/svg" '
-                 f'viewBox="0 0 100 28" preserveAspectRatio="none">'
-                 f'<polyline points="{pts}" fill="none" stroke="{col}" '
-                 f'stroke-width="1.4" opacity=".9"/></svg>')
-        body = svg_img(spark, "100%", f"{label} trace")
-    else:
-        body = (f'<div style="color:{TEXT_DIM};font-size:.66rem;height:30px;'
+    vs = [float(v) for v in values if v is not None][-40:]
+
+    if len(vs) < 2:
+        body = (f'<div style="color:{TEXT_DIM};font-size:.66rem;height:{_SPARK_H:.0f}px;'
                 f'display:flex;align-items:center">awaiting samples</div>')
-    return (f'<div style="margin-bottom:10px">'
+        return (f'<div style="margin-bottom:12px">'
+                f'<div class="hud-row" style="padding:0 0 2px">'
+                f'<span class="hud-k">{html.escape(label)}</span>'
+                f'<span class="hud-v" style="color:{col}">{html.escape(value)}</span>'
+                f'</div>{body}</div>')
+
+    lo, hi = min(vs), max(vs)
+    mid = abs(sorted(vs)[len(vs) // 2]) or 1.0
+    flat = (hi - lo) < _FLAT_REL * mid
+    rng = (hi - lo) or 1.0
+    usable = _SPARK_H - 2 * _SPARK_PAD
+    step = _SPARK_W / (len(vs) - 1)
+
+    def y(v: float) -> float:
+        if flat:                      # centre it rather than amplify noise
+            return _SPARK_H / 2
+        return _SPARK_H - _SPARK_PAD - (v - lo) / rng * usable
+
+    pts = " ".join(f"{i * step:.2f},{y(v):.2f}" for i, v in enumerate(vs))
+    lastx, lasty = (len(vs) - 1) * step, y(vs[-1])
+    # A faint fill under the trace reads as "volume of time" and keeps a
+    # single-pixel line from disappearing on a dark ground.
+    area = (f'{pts} {lastx:.2f},{_SPARK_H:.2f} 0,{_SPARK_H:.2f}')
+    baseline = (f'<line x1="0" y1="{_SPARK_H - .6:.2f}" x2="{_SPARK_W:.2f}" '
+                f'y2="{_SPARK_H - .6:.2f}" stroke="{LINE}" stroke-width="1" '
+                f'vector-effect="non-scaling-stroke"/>')
+    # Its own document: no page CSS reaches in here, so the gradient and every
+    # colour are declared inline (ui/svg.py).
+    spark = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {_SPARK_W:.0f} {_SPARK_H:.0f}" preserveAspectRatio="none">'
+        f'<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0" stop-color="{col}" stop-opacity=".26"/>'
+        f'<stop offset="1" stop-color="{col}" stop-opacity="0"/>'
+        f'</linearGradient></defs>'
+        f'{baseline}'
+        f'<polygon points="{area}" fill="url(#g)"/>'
+        f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="1.6" '
+        f'stroke-linejoin="round" stroke-linecap="round" '
+        f'vector-effect="non-scaling-stroke"/>'
+        f'<circle cx="{lastx:.2f}" cy="{lasty:.2f}" r="2.6" fill="{col}" '
+        f'vector-effect="non-scaling-stroke"/>'
+        f'</svg>')
+    # Explicit height, not "auto". With height:auto the <img> derives its height
+    # from the viewBox ratio, so a full-width trace grew to ~140px in a 500px
+    # column — the single biggest reason these read as lumpy area charts rather
+    # than sparklines. See ui/svg.py.
+    body = svg_img(spark, "100%", f"{label} trace, {len(vs)} samples",
+                   height=f"{_SPARK_H:.0f}px")
+
+    # Direct labels carry the vertical scale, because the graphic cannot.
+    def fmt(v: float) -> str:
+        return f"{v:,.0f}{unit}" if abs(v) >= 10 else f"{v:,.2f}{unit}"
+
+    scale = ("flat" if flat else f"{fmt(lo)} – {fmt(hi)}")
+    foot = (f'<div style="display:flex;justify-content:space-between;'
+            f'font-size:.6rem;color:{TEXT_DIM};padding-top:1px">'
+            f'<span>{html.escape(str(len(vs)))} samples</span>'
+            f'<span>{html.escape(scale)}</span></div>')
+    return (f'<div style="margin-bottom:12px">'
             f'<div class="hud-row" style="padding:0 0 2px">'
             f'<span class="hud-k">{html.escape(label)}</span>'
             f'<span class="hud-v" style="color:{col}">{html.escape(value)}</span>'
-            f'</div>{body}</div>')
+            f'</div>{body}{foot}</div>')

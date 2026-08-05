@@ -34,7 +34,7 @@ DECEASED = ("A patient died in our hospital with an unpaid bill of P400,000. "
             "deadline?")
 COVERED = ("A patient arrived at the emergency room without money. Can the "
            "hospital require a deposit before treating him?")
-NARRATIVE = ("My father passed away last month. The hospital is now calling me "
+NARRATIVE = ("My relative passed away last month. The hospital is now calling me "
              "every day demanding that I settle his bill personally.")
 
 WELL_POSED = [0.79, 0.75, 0.71]   # whole-question similarity, comfortably fine

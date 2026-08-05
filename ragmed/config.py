@@ -101,6 +101,34 @@ CANDIDATE_K = _env_int("CANDIDATE_K", 25)      # candidates before fusion
 # nothing else scores, the demoted chunks backfill, so a question that only one
 # document answers still gets a full context. 0 disables the cap.
 MAX_CHUNKS_PER_SOURCE = _env_int("MAX_CHUNKS_PER_SOURCE", 3)
+# The same idea one level up: most chunks any one corpus FAMILY (lawphil,
+# jurisprudence, doh, prc, billing) may take in the top_k. A per-FILE cap does
+# not constrain this — the deceased-body question filled four of six slots with
+# jurisprudence drawn from three different case files, satisfying the per-source
+# cap while case law still owned two thirds of the context, leaving no room for
+# the statute and its IRR to answer together. Demotes rather than drops, so a
+# question only one family answers still fills its context. 0 disables.
+#
+# Measured over the 7-question authority set, sweeping the cap:
+#
+#   cap  authority  statute+IRR together  families/top_k  off-topic (body)
+#     0      7/7            0/1               2.00             5/6
+#     2      7/7            1/1               2.86             4/6
+#     3      7/7            1/1               2.29             4/6
+#
+# 2, on the strength of the statute+IRR column and one concrete gain it is easy
+# to miss in the averages: at 2 the licensure rules reach the prompt, and they
+# name "refusal ... to release cadavers ... for non-payment of hospital bills"
+# as a violation outright (RA 4226, Sec. 17). That is a second operative
+# prohibition the answer could not previously cite.
+#
+# What the sweep does NOT show, and was checked separately: "more families" is
+# a proxy that can be gamed by importing junk. The informed-consent question —
+# genuinely answered by jurisprudence alone — carries exactly one off-topic
+# chunk at cap 0, 2 and 3 alike, so the cap swaps WHICH unrelated chunk appears
+# rather than adding one. Re-check that case, not just the mean, before raising
+# this: forcing breadth on a question one family answers is the failure mode.
+MAX_CHUNKS_PER_FAMILY = _env_int("MAX_CHUNKS_PER_FAMILY", 2)
 # Per-clause retrieval, for questions that ask more than one thing. Each ask
 # gets its own vector query (CLAUSE_CANDIDATE_K hits) and is then GUARANTEED
 # MIN_CHUNKS_PER_CLAUSE slots in the top_k.
@@ -137,6 +165,54 @@ RERANK_BATCH_SIZE = _env_int("RERANK_BATCH_SIZE", 16)
 # 0.1975 when the query names what it asks about. Below this, the fused ordering
 # stands.
 RERANK_MIN_SPREAD = float(_env("RERANK_MIN_SPREAD", "0.02"))
+# How many of the FUSED top results are guaranteed to survive reranking.
+#
+# The reranker is allowed to reorder, not to overrule. Measured failure: asked
+# "the hospital won't release my relative's body until we pay", hybrid fusion
+# put RA 9439 — the Anti-Hospital Detention Law, which is the whole answer — at
+# rank 3, and the cross-encoder demoted it to rank 17, out of the prompt. Five
+# of the six slots went to case law, three of them about a DIFFERENT statute.
+# The only RA 9439 material left was the IRR's list of the offence's elements,
+# which the model then read as a checklist of when detention is ALLOWED, and it
+# answered that a hospital may lawfully withhold a body. The exact inverse of
+# the law, to the exact person least able to check it.
+#
+# Why this shape of fix. A cross-encoder is strong at "does this passage answer
+# this question" and weak on terse statutory text against a lay narrative: four
+# lines of legislative prohibition look less responsive than pages of judicial
+# discussion around the same facts. That is precisely the case where the
+# bi-encoder was right and the reranker was wrong, so the reranker must not get
+# the last word alone. Rather than tune scores against each other, reserve
+# capacity — the same mechanism, and the same reasoning, as
+# MIN_CHUNKS_PER_CLAUSE.
+#
+# The KNEE of a measured curve, not a number fitted to the failing question.
+# Measured over 7 questions whose controlling authority is known independently
+# (5 statute-governed, 2 deliberately case-law-governed). Originally, on the
+# pre-chunk-fix index, by AUTHORITY alone:
+#
+#   protect=0  4/7      protect=3  7/7
+#   protect=2  6/7      protect=4  7/7      protect=5  7/7
+#
+# which saturates at 3, and 3 was the default for that reason. Re-measured
+# 2026-08-05 on the boundary-aware index, adding the off-topic count on the
+# informed-consent case (pure jurisprudence — the guard against a change that
+# merely drags statutes upward):
+#
+#   protect=3  auth 7/7, consent off-topic 1/6
+#   protect=4  auth 7/7, consent off-topic 0/6   <- default
+#   protect=5  auth 7/7, consent off-topic 0/6
+#   protect=6  auth 6/7                          <- breaks
+#   protect=7  auth 5/7, statute+IRR 0/1         <- reranker bypassed entirely
+#
+# AUTHORITY still saturates at 3, so the move to 4 is bought by the second
+# metric alone: it is the smallest setting that also clears the off-topic chunk
+# out of the case-law question. Note what the newer sweep corrects in the older
+# one — "going higher buys nothing" was too kind. Past 5 it actively breaks,
+# because a 6-slot context handed back to the bi-encoder is the failure the
+# reranker was added to fix. 5 is the last safe value; 4 is the chosen one.
+# 0 disables the guarantee.
+RERANK_PROTECT_TOP = _env_int("RERANK_PROTECT_TOP", 4)
 
 # --- Conversation memory ---------------------------------------------------
 # How many prior user+assistant PAIRS are replayed to the model. Kept small on

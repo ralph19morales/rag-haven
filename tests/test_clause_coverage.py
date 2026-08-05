@@ -56,13 +56,13 @@ def run() -> int:
                                   min_per_clause=2)
     r.append(check("neglected ask reaches the top_k at all",
                    {"estate1", "estate2"} <= set(ids(out)), True))
-    r.append(check("top_k size is unchanged", len(out), 10))
+    r.append(check("top_k size is unchanged", len(out[:10]), 10))
     r.append(check("results stay ordered by fused score",
-                   ids(out) == sorted(ids(out), key=lambda i:
+                   ids(out[:10]) == sorted(ids(out[:10]), key=lambda i:
                                       -next(x.score for x in out if x.id == i)),
                    True))
     r.append(check("the dominant ask keeps the rest of the slots",
-                   sum(1 for i in ids(out) if i.startswith("detain")), 8))
+                   sum(1 for i in ids(out[:10]) if i.startswith("detain")), 8))
 
     # Reservation is a FLOOR, not a quota: an ask that legitimately owns the
     # ranking is not cut back to min_per_clause.
@@ -71,7 +71,7 @@ def run() -> int:
     r.append(check("floor of 1 still admits the neglected ask",
                    "estate1" in ids(out), True))
     r.append(check("floor of 1 leaves 9 slots to the dominant ask",
-                   sum(1 for i in ids(out) if i.startswith("detain")), 9))
+                   sum(1 for i in ids(out[:10]) if i.startswith("detain")), 9))
 
     # Disabled / degenerate inputs fall through untouched.
     r.append(check("min_per_clause=0 disables reservation",
@@ -91,22 +91,36 @@ def run() -> int:
     out = _ensure_clause_coverage(ranked, [["detain0"], ["gone", "estate1"]],
                                   top_k=5, min_per_clause=2)
     r.append(check("ids missing from the ranking are skipped",
-                   "gone" in ids(out), False))
+                   "gone" in ids(out[:5]), False))
     r.append(check("the ask still gets its available evidence",
-                   "estate1" in ids(out), True))
+                   "estate1" in ids(out[:5]), True))
 
     # A clause whose evidence is already winning must not be double-counted
     # into extra slots.
     both = [["detain0", "detain1"], ["detain0", "detain2"]]
     out = _ensure_clause_coverage(ranked, both, top_k=5, min_per_clause=2)
     r.append(check("shared evidence is not selected twice",
-                   len(ids(out)), len(set(ids(out)))))
-    r.append(check("top_k is still filled when asks overlap", len(out), 5))
+                   len(ids(out[:5])), len(set(ids(out[:5])))))
+    r.append(check("top_k is still filled when asks overlap", len(out[:5]), 5))
 
     # top_k smaller than the total reservation must not overflow.
     out = _ensure_clause_coverage(ranked, clause_ids, top_k=3,
                                   min_per_clause=2)
-    r.append(check("reservation never exceeds top_k", len(out), 3))
+    r.append(check("reservation never exceeds top_k", len(out[:3]), 3))
+
+    # Demoted is not deleted. The reservation hands its result to
+    # _ensure_fused_head, which can only promote a chunk still in the list —
+    # truncating here disarmed that guarantee for every compound question, the
+    # same way the two caps did for simple ones.
+    out = _ensure_clause_coverage(ranked, clause_ids, top_k=3, min_per_clause=2)
+    r.append(check("the remainder is kept behind the selection",
+                   sorted(ids(out)), sorted(ids(ranked))))
+    # top_k=3 has room for one reserved chunk, not both — so estate1 is inside
+    # the selection and estate2 is what the tail exists to preserve.
+    r.append(check("the reserved chunk is inside the top_k",
+                   "estate1" in ids(out[:3]), True))
+    r.append(check("what did not fit survives in the tail",
+                   "estate2" in ids(out[3:]), True))
 
     failed = r.count(False)
     print(f"\n{len(r) - failed}/{len(r)} passed")

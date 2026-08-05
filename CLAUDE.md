@@ -43,10 +43,25 @@ streamlit run dashboard.py --server.port 8502   # ops dashboard: health + query 
 
 # Tests — no corpus, no LLM, no network required
 python tests/test_retrieval.py            # run a single file
-for t in tests/*.py; do python "$t"; done  # run all (168 checks across 12 files)
+for t in tests/*.py; do python "$t"; done  # run all (308 checks across 15 files)
+```
+
+```bash
+# Evals — measure the RUNNING SYSTEM (needs the index, the models, and usually
+# vLLM). Not part of the test suite: slow, non-deterministic, uses the GPU.
+python evals/retrieval_authority.py before   # controlling authority reaches top_k
+python evals/answer_quality.py before        # leaked labels / repeated fragments
+python evals/bench_llm.py before             # TTFT + decode tok/s
 ```
 
 There is no lint/format/type-check tooling configured in this repo (no ruff/black/mypy config).
+
+**Session handoff lives in `WORKLOG.md`** — current state, open items and where to pick up. Durable
+design rules stay here; `WORKLOG.md` is what happened and what is unfinished.
+
+**Before tuning any retrieval constant, sweep it with `evals/retrieval_authority.py` rather than
+guessing.** The defaults for `RERANK_PROTECT_TOP` and `MAX_CHUNKS_PER_FAMILY` are the knees of
+measured curves, and the reference numbers sit beside each constant in `ragmed/config.py`.
 
 **Test convention:** each `tests/test_*.py` is a standalone script, not a pytest suite (pytest
 isn't a dependency and none of these files define `test_*` functions — `pytest tests/` collects
@@ -75,7 +90,9 @@ them is the most common mistake when changing this code:
 for a self-contained question) → `retriever.retrieve()` runs hybrid search (dense via Chroma +
 lexical via BM25, fused by `DENSE_WEIGHT`/`LEXICAL_WEIGHT`) → **in this exact order**:
 `_dedupe()` → `_rerank()` (cross-encoder) → `_cap_per_source()` (no single document fills the
-context) → `_ensure_clause_coverage()` (each *ask* of a compound question gets guaranteed slots) →
+context) → `_cap_per_family()` (no single *kind* of authority fills it either) → `_ensure_clause_coverage()` (each *ask* of a compound question gets guaranteed slots) →
+`_ensure_fused_head()` (the fused top-`RERANK_PROTECT_TOP` are guaranteed a slot — the reranker
+reorders, it does not overrule) →
 `rag.py` builds the grounded prompt (system rules + labeled context chunks + question; the
 labels are `PASSAGE n` / `Cite as:` and deliberately **not** bracketed — see below) →
 `llm.generate()` streams the answer.
@@ -172,6 +189,113 @@ Four things are now cached per process; when changing any of them, mind the inva
   Size does not change when a file is re-ingested with the same chunk count, so `ingest` calls
   `retriever.invalidate_bm25()` explicitly as well as deleting the pickle.
 
+### The reranker reorders; it does not overrule
+
+A cross-encoder is strong at "does this passage answer this question" and weak on terse statutory
+text matched against a lay narrative — four lines of legislative prohibition read as less
+responsive than pages of judicial discussion of the same facts. Measured: asked *"the hospital
+won't release my relative's body until we pay"*, hybrid fusion ranked **RA 9439, the Anti-Hospital
+Detention Law, third** and the cross-encoder demoted it to **seventeenth**. Five of six context
+slots went to case law, three of them about a different statute. The only RA 9439 material left was
+the IRR's list of the offence's *elements*, which the model read as a checklist of when detention is
+**permitted** — and Haven answered that a hospital may lawfully withhold a body. The exact inverse
+of the law, to the person least able to check it.
+
+`_ensure_fused_head()` guarantees the fused top-`RERANK_PROTECT_TOP` (default 4) a place in the
+final top_k. Same mechanism and same reasoning as `MIN_CHUNKS_PER_CLAUSE`: when two signals
+disagree and each is right in a different regime, tuning their scores against each other fits the
+last example you looked at — reserve capacity instead.
+
+**The default is the knee of a measured curve, not a number fitted to the failing query.** Over 7
+questions whose controlling authority is known independently (5 statute-governed, 2 deliberately
+case-law-governed): `0 → 4/7`, `2 → 6/7`, `3 → 7/7`, `4 → 7/7`, `5 → 7/7`. AUTHORITY saturates at 3,
+and both case-law questions hold their exact prior ranks at every setting — that second check is the
+one that matters in the other direction, since a fix that merely dragged statutes upward would have
+broken them.
+
+Re-measured on the boundary-aware index with a second metric (off-topic chunks on the pure-
+jurisprudence informed-consent case), **the default moved 3 → 4**: authority is 7/7 at both, but 4
+is the smallest setting that also clears that case's off-topic chunk (`1/6 → 0/6`). The same sweep
+corrects something the original was too kind about — going higher does not merely "buy nothing", it
+**breaks**: `6 → 6/7` and `7 → 5/7` with statute+IRR lost, because a 6-slot context handed back to
+the bi-encoder is the very failure the reranker exists to fix. 5 is the last safe value.
+
+**Instruction sentences are query noise.** People append things like *"Check what philippine law is
+saying about this"*. That carries no retrievable content but still shifts the query embedding —
+measured, exactly that sentence pulled the Revised Penal Code to fused rank 2 (its Art. 85 concerns
+the corpse of an *executed* person) and pushed RA 9439 out of the top_k, so Haven answered "not
+covered" with the controlling statute sitting in the index. `_strip_meta_sentences()` removes them
+from the SEARCH text only; the user's original wording still reaches the prompt, the same
+separation HyDE and the follow-up rewrite already use. It is deliberately narrow — the sentence must
+both lead with an assistant-directed imperative AND end on a deictic, so "Explain informed consent"
+survives — and it never strips every sentence.
+
+Note the interaction, because it is the kind that hides: once the wrong document was in the fused
+head, `_ensure_fused_head` faithfully **protected** it. A guarantee applied to a polluted ranking
+propagates the pollution.
+
+**A per-file cap is not a per-authority cap.** `MAX_CHUNKS_PER_SOURCE=3` was satisfied while
+jurisprudence still held four of six slots on the deceased-body question — three different case
+files, one per file. `_cap_per_family()` limits a corpus family (lawphil / jurisprudence / doh /
+prc / billing, via the shared `source_family()`), which is what let the statute and its IRR occupy
+the context together: the prohibition lives in one and the interment and document rules in the
+other. Measured, it also pulled in the licensure rules naming refusal to release cadavers as a
+violation outright (RA 4226, Sec. 17) — a second operative prohibition the answer could not
+previously cite.
+
+**Do not raise it on the strength of "more families".** That number is a proxy and it can be gamed
+by importing junk: a question one family genuinely answers gets *worse* when breadth is forced.
+Informed consent is the case to check — it is pure jurisprudence, and it carries exactly one
+off-topic chunk at cap 0, 2 and 3 alike, so the cap swaps which unrelated chunk appears rather than
+adding one. Check that question, not the mean.
+
+**A guarantee that runs after a filter must be given the filter's leavings.** `_ensure_fused_head`
+and `_ensure_clause_coverage` can only promote a chunk that is still in the list handed to them.
+Both caps used to truncate their overflow at `top_k`, which silently disarmed the fused-head
+guarantee — measured on the deceased-body question, it protected three chunks and delivered
+**one**. The caps and the coverage stage now return their remainder as a TAIL; `top_k` is the point
+the backfill must reach, not the length of the result. Second, related break in the same function:
+promoting a protected chunk evicted a *different* protected chunk, because it displaced the
+lowest-ranked occupant without asking whether that occupant was itself protected. Whatever a
+guarantee evicts must be something it was not asked to keep.
+
+**The lesson worth keeping:** a corpus can contain the right law, dense retrieval can rank it
+correctly, and the system can still answer the opposite — because a later stage silently overruled
+an earlier one. When an answer is wrong, trace the ranking stage by stage before assuming the
+corpus is missing something.
+
+**And one stage further back than that: "the right document is in the context" is not "the operative
+sentence is in the context".** The deceased-body answer was diagnosed as prompt-level — the model
+"treating a condition as a precondition" — on the assumption that the text stating the entitlement
+had reached the prompt. It had not. What reached the prompt was the offence-ELEMENTS list from the
+same file, which reads exactly like a checklist of conditions the family must satisfy; the
+entitlement sentence was capped out three stages earlier. AUTHORITY was green throughout, because
+it only asks whether the right *file* appeared. Where a question turns on one sentence, name that
+sentence in the eval — `KEY_TEXT` in `evals/retrieval_authority.py` does this.
+
+### Chunking: a document whose headings don't match `SECTION_RE` gets no structure at all
+
+`_split_on_sections` returns the WHOLE document as a single unit when it finds no
+SECTION/ARTICLE/RULE header, and `_pack` then falls to its oversized branch. That branch used to
+cut at raw character offsets. Most of this corpus lands there: DOH and PRC issuances head their
+parts "I. Rationale", "B. Specific Guidelines", "1.", "2.", and Supreme Court decisions have no
+section headers — **632 chunks across 19 files**, including all 175 chunks of the landmark
+informed-consent case.
+
+The cuts landed mid-word (`who refuse to execute a promisso`, `Detention occ|urs`), and the damage
+is not mainly cosmetic: **the chunk's embedding is diluted by whatever the window happened to scoop
+up on either side.** The operative sentence of DOH AO 2008-0001 shared a chunk with SSS/GSIS
+insurance boilerplate and ranked 9th in fusion as a result. `_split_point` now breaks at the last
+paragraph break under the limit, then line break, then sentence end, then space — and `_snap_start`
+moves the overlap rewind forward to a word boundary, because that rewind is plain arithmetic and
+otherwise reintroduces a severed word at the *head* of the next chunk. Both directions matter; the
+first draft of the fix only handled the tail and the tests caught it.
+
+Changing any of this requires `cli.py ingest --reset`. Prefer building into a shadow collection
+(`COLLECTION_NAME=... cli.py ingest --reset`) and measuring before swapping — the live index keeps
+serving, and the rollback is a rename. Note `data/bm25.pkl` is shared across collections and keyed
+by size, so it is rebuilt on first query after a swap.
+
 ### Don't give the model a citation-shaped label
 
 The retrieved passages were once labelled `[Context 1]`, `[Context 2]`… and the system prompt
@@ -190,6 +314,17 @@ The fix is in three parts, and all three matter:
 - `rag.strip_source_labels()` removes any that still get through, on both the streaming and
   non-streaming paths. A prompt rule is a request; this is the guarantee.
 
+The same three layers were then needed a second time, for the same reason. Answers began explaining
+*where* a provision was found instead of citing it: `(as cited in Republic Act No. 9439 in)`,
+`(as detailed in ... source file)`, and one that reproduced a `Cite as:` header verbatim, pipe
+separator included. **The prompt rule was tried first and did not work** — the leaks persisted and
+merely changed shape, which is the clearest evidence in this repo that a prompt rule is a request.
+`rag.strip_provenance()` is the guarantee. It is deliberately narrow, because `(as cited in <case>)`
+is ordinary legal writing: a parenthetical is removed only when it also names prompt scaffolding
+(source file, passage, context, `Cite as`, or the `|` that appears only in a header) or trails off
+on a dangling preposition. A milder variant is still unfixed — answers opening "Based on the
+provided context, …" — which is a leading hedge and matches neither this nor `trim_trailing_caveat`.
+
 Two things that function will not do, both learned by breaking them: it does not strip whole-text
 whitespace (it runs per streamed chunk, and a chunk's trailing blank line is the paragraph break —
 stripping it glued paragraphs together), and it does not collapse runs of spaces globally (that
@@ -202,10 +337,9 @@ un-nested markdown list items anywhere a label had been removed in the same chun
 `rag.answer()`, for both the streaming and non-streaming paths. Logging is best-effort and never
 raises. `dashboard.py` (a separate Streamlit app, own port) reads this file plus live health probes
 (vLLM reachability, GPU VRAM via `nvidia-smi`, the CPU-pinning check above, index size). It is
-presented as a heads-up display (`ui/hud.py`) and deliberately does **not** use the shared
-law-library theme in `.streamlit/config.toml` — Haven is read by a worried patient and stays quiet,
-this is read at a glance by whoever runs the box. The override is safe only because this is its own
-app on its own port. **A state must never be carried by colour, glow, or motion alone**: every
+presented as a heads-up display (`ui/hud.py`) and deliberately does **not** use the theme in
+`.streamlit/config.toml` — Haven is read slowly by a worried patient, this is read at a glance by
+whoever runs the box. The override is safe only because this is its own app on its own port. **A state must never be carried by colour, glow, or motion alone**: every
 reading is legible with animation disabled, and the two failures this dashboard exists to catch
 (LLM down, CPU-pinning regression) also print a full plain-text explanation. 
 
@@ -230,6 +364,92 @@ What it checks, and why each category exists:
 **When adding a probe, put it in one of those four categories** — and prefer the last two. Liveness
 is the easy kind to add and the least likely to catch the next real failure. Refresh is manual by default with an **opt-in Live toggle** (`st.fragment(run_every=…)`, 5/10/30s). This is the third attempt at auto-refresh; the two earlier ones and why they failed are in the module docstring — do not re-try a meta-refresh, it reloads the visible page and now would also wipe the canary output. Live mode defaults to OFF because this page shares a GPU with real users, and the canary is deliberately outside the fragment so it can never auto-fire.
 
+### Both apps are the same console now — and what that moved onto other shoulders
+
+Haven (`app.py` + `ui/chrome.py`) and the ops dashboard (`dashboard.py` + `ui/hud.py`) are one
+register: cyan on near-black, scanlines, corner brackets, glow, monospace, an animated armoured mark
+(`ui/robot.py`) that idles on the hero and works during a wait. **`chrome.py` is built on
+`hud.hud_css()` and imports the palette from `hud.py` rather than restating it** — keep it that way.
+Two copies of a palette that has to agree is precisely how the two pages would drift apart by
+accident, and `tests/test_public_surface.py` pins both the shared accent and the single-sourced
+stylesheet.
+
+This reverses an earlier rule, and the reason the earlier rule existed did not go away with it. It
+read: *Haven carries a disclaimer that has to be believed, and a legal answer rendered in sci-fi
+chrome reads as a toy, at which point "verify this before you rely on it" stops landing.* The change
+was made deliberately; the risk is now carried **structurally instead of chromatically**, in three
+places that are not decoration and must not be traded away for atmosphere:
+
+- **The not-legal-advice line is a panel in the ALERT hue, never the accent** (`chrome.advisory()`).
+  On a console, cyan is the colour of everything that is merely working, and the eye stops reading it
+  within seconds. The caveat is the one thing on the page that has to survive that.
+- **The caveat sentence is never set in tracked-out capitals.** Capitals are for micro-labels and
+  headings. A legal caveat styled as a HUD label reads as decoration and gets skipped — which is the
+  original failure this whole area is downstream of. The label above the panel may shout; the
+  sentence may not.
+- **Every state the mark carries in colour is also stated in words, before it.** `robot_hero(alert=…)`
+  turns red when the model is unreachable, and `app.py` emits the sentence saying so *above* the
+  drawing. The test asserts that ordering, not merely that both exist.
+
+If those three go, nothing is holding the disclaimer up any more. The test file says the same thing
+at the top of `run()`; read it before relaxing any of the four checks in that block.
+
+**Never set a font family broadly without excluding the icon spans.** Streamlit draws every
+`:material/…:` icon as a **ligature**: the element's text content is the literal string `smart_toy`,
+and the font `"Material Symbols Rounded"` is what turns it into a glyph. `hud_css()` sets monospace
+on `[class*="st-"]`, which matches those spans — so the names printed as words across *both* apps
+(`smart_toy` on every assistant avatar, `keyboard_double_arrow_right` on the sidebar toggle,
+`menu_book` on the sources expander), and because Streamlit gives avatars a filled background they
+read as coloured blocks of text. `hud_css()` restores the family with `!important` (the emotion classes
+outrank a bare attribute selector).
+
+**Match those spans by shape, not by enumeration** — this was fixed twice. The icon component
+defaults to `data-testid="stIconMaterial"` but accepts an override, and the overrides are scattered
+across the bundle (`stExpanderIconError`, `stFileChipIconSpinner`, `stAlertDynamicIcon`,
+`stToastDynamicIcon`, `stElementToolbarButtonIcon`…). A hand-listed set of three selectors shipped,
+looked fixed, and left the expander chevron printing `keyboard_arrow_right` in the sidebar. The rule
+now uses `$="Icon"` plus two prefixes, and `tests/test_hud_graphics.py` checks **every** icon testid
+in the bundle against the selectors it parses out of the stylesheet — re-derive that list with
+`grep -rhao 'st[A-Za-z]*Icon[A-Za-z]*' streamlit/static | sort -u` after a Streamlit upgrade. The
+symbol font is followed by a real family so an icon slot carrying an emoji rather than a ligature
+still resolves; font fallback is per-glyph. A related one in the same family: Streamlit fills the assistant avatar with the
+theme's **orangeColor**, which on this palette is the amber warning hue — every answer opened with a
+caution block beside it until `chrome.py` overrode it.
+
+**The first page load is held by the nucleus, not by a blank page.** The embedder and reranker load
+on first use — ~6s on CPU, paid by whoever opens the page first — and a blank page reads as broken
+rather than as busy. `chrome.booting()` fills it with `hud.nucleus()`, the same drawing the console
+uses for its verdict; `neutron()` is now a thin wrapper over it, so there is one copy of that
+animation rather than two. `app.py` gates the panel on `session_state` rather than on the cache:
+`warm_up` is cached per *server*, so a later visitor's placeholder is written and cleared inside one
+script run and never paints.
+
+Haven still commits to **one** ground rather than following the reader's light/dark preference, which
+is why `.streamlit/config.toml` repeats the same palette into `[theme.light]` and `[theme.dark]`.
+That table exists so Streamlit's own widget chrome lands on the console ground instead of fighting
+the CSS layered over it. Nothing in `app.py` or `ui/chrome.py` branches on theme.
+
+### Haven shows no machinery — that is a rule, not an accident
+
+`app.py` is the only surface a member of the public sees. It deliberately does not state the model
+names, the indexed-passage count, how many passages an answer used, relevance scores, the corpus
+filename behind a citation, or the raw transport error when the LLM is down. Every one of those was
+on the page at some point and each was removed for the same reason: none of it changes what a reader
+should do next, and precision about the apparatus invites someone to defer to the answer instead of
+checking it. An operator gets all of it from `cli.py status` and the dashboard.
+
+What must never be stripped in the name of decluttering: the not-legal-advice line (hero *and* under
+every answer), the sources section, and the instruction to open the law itself.
+`tests/test_public_surface.py` pins both halves — what may not appear, and what must.
+
+The sidebar's "It runs entirely on this computer. Nothing you type is sent anywhere." was removed,
+and the test now asserts its **absence**. It is the one claim on the page that a change of
+deployment silently falsifies — true of the local setup, false the moment Haven is hosted, and
+unlike a wrong citation no reader can check it. The hero's "PRIVATE BY DESIGN" chip was removed for
+the same reason. **No claim about the deployment now appears anywhere on the page**, and the test
+asserts that in both places. If you ever want one back, derive it from where the app actually runs
+rather than hard-coding it into chrome.
+
 ### Never pass a bare `<svg>` to `st.html` — it is silently deleted
 
 `st.html` sanitises with DOMPurify configured `USE_PROFILES: {html: true}` (verifiable in the
@@ -246,7 +466,25 @@ Route every graphic through `ui/svg.py::svg_img()`, which inlines it as a `data:
 (`img` is in the html profile, `src` is in Streamlit's `ADD_ATTR`, and DOMPurify permits `data:`
 on image tags). Consequence for callers: **the SVG becomes its own document** — page CSS cannot
 reach inside it, so all styles and `@keyframes` must live in a `<style>` element within the
-`<svg>`. Media queries still work there, so `prefers-reduced-motion` is still honoured.
+`<svg>`. Media queries still work there, so `prefers-reduced-motion` is still honoured. It also
+takes no hover, so an `<img>` graphic can never carry a tooltip — anything a reader needs must be
+direct-labelled into the drawing.
+
+**And `height:auto` is a trap on any graphic wider than it is tall.** An `<img>` derives its
+intrinsic ratio from the `viewBox`, so a sparkline drawn into `0 0 100 28` at `width:100%` renders
+at 28% of the panel width — roughly 140px tall in a 500px column, about five times the intended
+height. That is what made the ops traces read as lumpy area charts. Pass an explicit `height`, set
+`preserveAspectRatio="none"` so the drawing fills the box, and give every stroke
+`vector-effect="non-scaling-stroke"` or the non-uniform scale renders horizontal and vertical
+strokes at different weights. `tests/test_hud_graphics.py` pins all three.
+
+**Charts are the exception to the SVG rule — use Altair, not hand-rolled SVG.** `st.altair_chart`
+renders a real Vega-Lite component rather than sanitised HTML, so it is not subject to the trap
+above *and* it can carry the hover layer a chart is supposed to have. `hud.chart_theme()` puts one
+on the HUD's ground; `hud.SERIES` holds the two categorical slots, which are deliberately NOT the
+status hues (an amber line reads as a warning) and were picked by running the computable
+colour checks rather than by eye — the measured numbers and the one recorded deviation are beside
+the constants in `ui/hud.py`.
 
 The general lesson, which cost real time here: *"the server emitted it"* is not *"the browser
 rendered it"*. For anything visual, the only real verification is a human looking at the page.

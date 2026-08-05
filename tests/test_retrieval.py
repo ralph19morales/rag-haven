@@ -15,7 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ragmed.retriever import Retrieved, _dedupe, _dedupe_key  # noqa: E402
+from ragmed.retriever import (Retrieved, _dedupe,  # noqa: E402
+                              _dedupe_key, _strip_meta_sentences)
 
 DECISION = ("It is good medical practice for the anesthesiologist to see the "
             "patient a day before the surgery.")
@@ -86,6 +87,32 @@ def run() -> int:
     results.append(check("empty input is handled", _dedupe([]), []))
     results.append(check("key normalises whitespace",
                          _dedupe_key("  A  B \n c "), "a b c"))
+    # --- assistant-directed filler must not steer retrieval -----------------
+    # Shipped bug: a user pasted "…Can they do that? Check what philippine law
+    # is saying about this". That trailing sentence carries no retrievable
+    # content but shifted the query embedding enough to pull the Revised Penal
+    # Code to fused rank 2 (Art. 85 concerns the corpse of an EXECUTED person)
+    # and push RA 9439 — the controlling statute — out of the top_k. Haven then
+    # answered that the issue was "not covered", with the statute sitting in
+    # the index the whole time.
+    results.append(check(
+        "trailing 'check what the law says about this' is dropped",
+        _strip_meta_sentences(
+            "The hospital won't release the body. Can they do that? "
+            "Check what philippine law is saying about this"),
+        "The hospital won't release the body. Can they do that?"))
+    # It must stay narrow. These lead the same way and carry the whole
+    # question, so stripping them would leave nothing to search for.
+    for keep in ("Explain informed consent",
+                 "Tell me about senior citizen discounts",
+                 "Check what the law says about this"):
+        results.append(check(f"kept intact: {keep!r}",
+                             _strip_meta_sentences(keep), keep))
+    results.append(check(
+        "never strips every sentence",
+        _strip_meta_sentences("Tell me about this. Explain that."),
+        "Tell me about this. Explain that."))
+
 
     failed = results.count(False)
     print(f"\n{len(results) - failed}/{len(results)} passed")

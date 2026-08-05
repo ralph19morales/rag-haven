@@ -1,25 +1,33 @@
-"""Haven's chrome — the ops dashboard's visual language, taken down several stops.
+"""Haven's chrome — a heads-up display, the same register as the ops console.
 
-`ui/hud.py` gives the ops console a heads-up display: dark ground, cyan accent,
-scanlines, rotating rings. That is right for a screen read at a glance, from
-across a room, to answer "is anything broken". It would be wrong here. Haven is
-read slowly, up close, by someone who is worried — and the page carries a
-disclaimer that has to be believed. A legal answer rendered in sci-fi chrome
-reads as a toy, and the moment it does, the "verify this before relying on it"
-line stops landing.
+WHAT CHANGED, AND WHAT DID NOT. This module used to be the deliberate opposite
+of `ui/hud.py`: neutral near-black, a single brass accent, soft surfaces, no
+console cues, on the reasoning that a legal answer rendered in sci-fi chrome
+reads as a toy and stops its disclaimer landing. That split was removed by
+request — Haven is now the console: cyan on near-black, scanlines, corner
+brackets, glow, monospace, and an armoured mark that idles and works
+(`ui/robot.py`).
 
-So this borrows the HUD's STRUCTURE and none of its voltage:
+The reasoning behind the old split has not been thrown away, because the risk it
+named is real and is now unmanaged by the palette. It is handled here instead,
+in three places, and these are the parts of this file NOT to trade away for
+atmosphere:
 
-  kept       corner brackets, hairline rules that fade out, uppercase
-             letterspaced micro-labels for metadata, tabular figures, a
-             precise instrument-like layout for the source cards
-  dropped    the dark ground, the high-chroma accent, scanlines, glow on text,
-             anything that rotates, monospace body copy
+  * `advisory()` renders the not-legal-advice line as an alert-weight panel —
+    the heaviest thing on the page, above the ask box, in the alert hue rather
+    than the ambient cyan. On a console, ambient chrome is what the eye learns
+    to skip; a caveat has to sit outside it.
+  * the caveat SENTENCE is never set in tracked-out capitals. Uppercase
+    letterspacing is used for micro-labels and headings only. A legal caveat set
+    as a HUD label reads as decoration and gets skipped, which is the failure
+    this whole module exists downstream of.
+  * `source_card()` still names the law the way the law names itself, and still
+    refuses a filename. Chrome changed; what a reader can carry to a lawyer
+    did not.
 
-Colours stay the law-library palette from `.streamlit/config.toml` — slate
-indigo, brass, blue-black on cool pearl — and are passed in per theme rather
-than hard-coded, because unlike the dashboard (its own app, forced dark) Haven
-honours whichever mode the reader is in.
+The palette is IMPORTED from `ui/hud.py`, not restated. The two surfaces are one
+register now, and a second copy of a palette that has to agree is exactly how
+they would drift back apart by accident.
 
 Same offline rule as the rest of `ui/`: inline CSS and SVG only, no webfont, no
 remote asset.
@@ -28,79 +36,151 @@ from __future__ import annotations
 
 import html
 
+from .hud import (ALERT, CYAN, CYAN_DIM, CYAN_GHOST, INK_2, LINE, MONO, TEXT,
+                  TEXT_DIM, hud_css, nucleus)
 
-def chrome_css(dark: bool) -> str:
-    """Page-level chrome. `dark` selects the palette; both are first-class."""
-    if dark:
-        line = "#28313d"
-        rule = "#323d4c"
-        accent = "#8fa4d4"
-        label = "#8b95a3"
-        card = "rgba(26,32,41,.55)"
-        card_line = "#2b3542"
-    else:
-        line = "#d5dae1"
-        rule = "#c3cbd6"
-        accent = "#38476b"
-        label = "#616b7a"
-        card = "rgba(255,255,255,.62)"
-        card_line = "#d9dee5"
+# --- palette ---------------------------------------------------------------
+# Aliases, so callers on this page read in Haven's terms rather than the
+# dashboard's. They are the SAME values by design — see the module docstring.
+ACCENT = CYAN
+GROUND_2 = INK_2
+LABEL = TEXT_DIM
 
-    return f"""
+
+def chrome_css() -> str:
+    """Page chrome: the shared console base, then Haven's own components.
+
+    Built on `hud_css()` rather than beside it. Everything structural — the
+    ground, the scanline overlay, monospace throughout, the uppercase headings,
+    the alert and button treatments — is the console's, stated once. What
+    follows is only what Haven has and the dashboard does not: a conversation,
+    example situations, source cards and an advisory panel.
+    """
+    return hud_css() + f"""
 <style>
-  /* --- micro-label: the one typographic tic carried over from the HUD.
-     Uppercase, letterspaced, small. Used only for METADATA — never for the
-     answer, never for the disclaimer. Those stay in plain sentence case,
-     because a legal caveat set in tracked-out capitals reads as decoration
-     and gets skipped. --- */
+  /* --- chat: each turn is a HUD panel ---------------------------------- */
+  [data-testid="stChatMessage"] {{
+    background: linear-gradient(180deg, rgba(20,52,68,.30), rgba(10,17,25,.18));
+    border: 1px solid {LINE}; border-radius: 0;
+    padding: 14px 16px; margin-bottom: 12px; position: relative;
+  }}
+  [data-testid="stChatMessage"]::before,
+  [data-testid="stChatMessage"]::after {{
+    content: ""; position: absolute; width: 12px; height: 12px;
+    border-color: {CYAN}; border-style: solid; opacity: .8;
+  }}
+  [data-testid="stChatMessage"]::before {{
+    top: -1px; left: -1px; border-width: 2px 0 0 2px;
+  }}
+  [data-testid="stChatMessage"]::after {{
+    bottom: -1px; right: -1px; border-width: 0 2px 2px 0;
+  }}
+  /* Body copy inside a turn is the one place letterspacing is NOT applied:
+     these are paragraphs of law, read line by line, not glanced at. */
+  [data-testid="stChatMessage"] p,
+  [data-testid="stChatMessage"] li {{
+    letter-spacing: 0; line-height: 1.62;
+  }}
+
+  /* Avatars. Streamlit fills the assistant's with the theme's ORANGE, which on
+     this page is the amber warning hue — so every answer opened with a caution
+     block beside it. Square, ink-filled, cyan glyph instead. Only the
+     background and colour are touched: the font-family belongs to the icon
+     ligature and is restored in hud_css(), and setting one here would print
+     `smart_toy` as text again. */
+  [data-testid^="stChatMessageAvatar"] {{
+    background: {INK_2} !important; border: 1px solid {LINE};
+    border-radius: 0; color: {CYAN} !important;
+    box-shadow: 0 0 14px rgba(79,216,255,.16);
+  }}
+  [data-testid="stChatMessageAvatarUser"] {{
+    color: {TEXT_DIM} !important; box-shadow: none;
+  }}
+
+  /* The answer carries a live rail down its left edge — the console's
+     equivalent of the hairline the old chrome used. */
+  [class*="st-key-hv-answer"] {{
+    border-left: 2px solid {CYAN}; padding-left: 15px;
+    box-shadow: -7px 0 18px -12px {CYAN};
+  }}
+
+  /* --- micro-label. METADATA AND HEADINGS ONLY — never the caveat. ----- */
   .hv-label {{
-    font-size: .625rem; letter-spacing: .19em; text-transform: uppercase;
-    color: {label}; font-weight: 600; display: flex; align-items: center;
-    gap: 9px; margin: 0 0 9px;
+    font-family: {MONO}; font-size: .64rem; letter-spacing: .24em;
+    text-transform: uppercase; color: {CYAN}; font-weight: 600;
+    display: flex; align-items: center; gap: 9px; margin: 4px 0 11px;
   }}
   .hv-label::after {{
     content: ""; flex: 1; height: 1px;
-    background: linear-gradient(90deg, {rule}, transparent);
+    background: linear-gradient(90deg, {CYAN_GHOST}, transparent);
   }}
 
-  /* --- source card: the direct descendant of the dashboard's hud-panel.
-     Same two-corner bracket construction, at a fraction of the contrast. --- */
+  /* --- source card: a readout line with the law as its value ----------- */
   .hv-card {{
-    position: relative; border: 1px solid {card_line}; background: {card};
-    padding: 12px 14px 11px; margin: 0 0 9px;
+    position: relative; background: {INK_2};
+    border: 1px solid {LINE}; border-left: 2px solid {CYAN};
+    padding: 11px 14px 12px; margin: 0 0 8px;
   }}
-  .hv-card::before, .hv-card::after {{
-    content: ""; position: absolute; width: 9px; height: 9px;
-    border-color: {accent}; border-style: solid; opacity: .5;
+  .hv-card::after {{
+    content: ""; position: absolute; bottom: -1px; right: -1px;
+    width: 10px; height: 10px; border: solid {CYAN_DIM};
+    border-width: 0 2px 2px 0; opacity: .8;
   }}
-  .hv-card::before {{ top: -1px; left: -1px; border-width: 1.5px 0 0 1.5px; }}
-  .hv-card::after  {{ bottom: -1px; right: -1px; border-width: 0 1.5px 1.5px 0; }}
-
   .hv-n {{
-    font-size: .625rem; letter-spacing: .14em; color: {label};
-    font-variant-numeric: tabular-nums;
+    font-family: {MONO}; font-size: .62rem; letter-spacing: .18em;
+    color: {CYAN}; font-variant-numeric: tabular-nums; font-weight: 600;
+    text-shadow: 0 0 12px rgba(79,216,255,.45);
+  }}
+  .hv-law {{
+    font-family: {MONO}; font-weight: 600; font-size: .92rem; line-height: 1.4;
+    margin: 5px 0 0; color: {TEXT}; letter-spacing: .02em;
+  }}
+  .hv-sec {{
+    font-family: {MONO}; font-size: .8rem; color: {TEXT_DIM};
+    margin: 4px 0 0; line-height: 1.45;
   }}
 
-  /* --- hero meta strip: the one place the machinery is stated on the front
-     page. Facts only — how much law is indexed, and that it never leaves the
-     machine. Both are things a worried reader has an actual reason to want,
-     which is what keeps this from being chrome for its own sake. --- */
+  /* --- advisory: the not-legal-advice panel.
+     Deliberately NOT the ambient cyan. On a console the accent is the colour of
+     everything that is merely working, and the eye stops reading it within
+     seconds; this is the one thing on the page that must survive that. Alert
+     hue, heavier rule, its own ground. The SENTENCE stays sentence case — see
+     the module docstring for why the label above it may be capitals and the
+     caveat itself may not. --- */
+  .hv-advisory {{
+    position: relative; border: 1px solid {ALERT}; border-left-width: 3px;
+    background: linear-gradient(90deg, rgba(255,95,109,.10), transparent 78%),
+                {INK_2};
+    padding: 13px 16px 14px; margin: 4px 0 16px;
+  }}
+  .hv-advisory .hv-adv-label {{
+    font-family: {MONO}; font-size: .64rem; letter-spacing: .26em;
+    text-transform: uppercase; color: {ALERT}; font-weight: 600;
+    margin: 0 0 7px;
+  }}
+  .hv-advisory p {{
+    margin: 0; color: {TEXT}; font-size: .92rem; line-height: 1.6;
+    letter-spacing: 0;
+  }}
+  .hv-advisory b {{ color: {ALERT}; }}
+
+  /* --- hero meta strip -------------------------------------------------- */
   .hv-meta {{
     display: flex; justify-content: center; flex-wrap: wrap;
-    gap: 0; margin: 14px 0 4px;
+    gap: 0; margin: 14px 0 18px;
   }}
   .hv-meta span {{
-    font-size: .62rem; letter-spacing: .17em; text-transform: uppercase;
-    color: {label}; padding: 0 14px; border-right: 1px solid {line};
-    font-variant-numeric: tabular-nums;
+    font-family: {MONO}; font-size: .62rem; letter-spacing: .2em;
+    text-transform: uppercase; color: {TEXT_DIM}; padding: 0 15px;
+    border-right: 1px solid {LINE};
   }}
   .hv-meta span:last-child {{ border-right: none; }}
-  .hv-meta b {{ color: {accent}; font-weight: 600; }}
+  .hv-meta b {{ color: {CYAN}; font-weight: 600; }}
 
-  /* --- the four opening situations, as bracketed cards.
+  /* --- the opening situations.
      Numbered with a CSS counter rather than by baking "01" into each label:
-     the number is presentation, and putting it in the button text would send
-     it to screen readers as part of the question. --- */
+     the number is presentation, and putting it in the button text would send it
+     to screen readers as part of the question. --- */
   .st-key-hv-situations {{ counter-reset: hv-sit; }}
   .st-key-hv-situations .stButton {{
     counter-increment: hv-sit; position: relative;
@@ -108,63 +188,66 @@ def chrome_css(dark: bool) -> str:
   .st-key-hv-situations .stButton::before {{
     content: counter(hv-sit, decimal-leading-zero);
     position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
-    font-size: .62rem; letter-spacing: .12em; color: {label};
-    font-variant-numeric: tabular-nums; pointer-events: none; z-index: 1;
+    font-family: {MONO}; font-size: .62rem; letter-spacing: .14em;
+    color: {CYAN_DIM}; font-variant-numeric: tabular-nums;
+    pointer-events: none; z-index: 1; transition: color .18s ease;
   }}
+  /* These override the console's button rule on one point only: a full
+     question is not a control label, so it keeps sentence case and normal
+     tracking. Everything else — square corners, cyan frame, glow on hover —
+     is inherited. */
   .st-key-hv-situations .stButton > button {{
     position: relative; text-align: left; justify-content: flex-start;
-    padding: 13px 15px 13px 46px; min-height: 0; height: auto;
-    white-space: normal; line-height: 1.45;
-    border: 1px solid {card_line}; background: {card}; border-radius: 0;
-    transition: border-color .16s, background .16s;
+    padding: 14px 16px 14px 48px; min-height: 0; height: auto;
+    white-space: normal; line-height: 1.55; text-transform: none;
+    letter-spacing: .01em; font-size: .86rem; color: {TEXT};
+    border: 1px solid {LINE}; background: {INK_2};
   }}
   .st-key-hv-situations .stButton > button:hover {{
-    border-color: {accent}; background: {card};
+    border-color: {CYAN}; background: rgba(79,216,255,.08);
+    box-shadow: 0 0 18px rgba(79,216,255,.22); color: {TEXT};
   }}
-  .st-key-hv-situations .stButton > button::before,
-  .st-key-hv-situations .stButton > button::after {{
-    content: ""; position: absolute; width: 8px; height: 8px;
-    border-color: {accent}; border-style: solid; opacity: .45;
+  .st-key-hv-situations .stButton:hover::before {{ color: {CYAN}; }}
+
+  /* --- ask box ---------------------------------------------------------- */
+  [data-testid="stChatInput"] {{
+    border: 1px solid {CYAN_DIM}; border-radius: 0; background: {INK_2};
   }}
-  .st-key-hv-situations .stButton > button::before {{
-    top: -1px; left: -1px; border-width: 1.5px 0 0 1.5px;
-  }}
-  .st-key-hv-situations .stButton > button::after {{
-    bottom: -1px; right: -1px; border-width: 0 1.5px 1.5px 0;
+  [data-testid="stChatInput"] textarea {{
+    font-family: {MONO}; letter-spacing: .02em;
   }}
 
-  /* --- answer frame: a single hairline down the left of every reply.
-     Deliberately one rule and not a full bracketed box — the answer is the
-     thing being read, and boxing it competes with the chat bubble already
-     around it. --- */
-  [class*="st-key-hv-answer"] {{
-    border-left: 2px solid {accent}; padding-left: 15px;
+  /* --- expander (the sources) ------------------------------------------- */
+  [data-testid="stExpander"] details {{
+    border: 1px solid {LINE}; border-radius: 0; background: transparent;
   }}
-  .hv-law {{
-    font-weight: 600; font-size: .95rem; line-height: 1.35; margin: 2px 0 0;
-  }}
-  .hv-sec {{ font-size: .86rem; opacity: .82; margin: 4px 0 0; }}
-  .hv-file {{
-    font-size: .68rem; opacity: .58; margin: 7px 0 0;
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    word-break: break-all;
+  [data-testid="stExpander"] summary {{
+    font-family: {MONO}; text-transform: uppercase; letter-spacing: .16em;
+    font-size: .7rem; color: {CYAN};
   }}
 </style>
 """
 
 
-def hero_meta(passages: int, local: bool = True) -> str:
-    """The one-line statement of what is behind the answers.
+def hero_meta() -> str:
+    """What is behind the answers, in words rather than numbers.
 
-    Kept to facts a reader has a reason to want — how much law is indexed, and
-    that it stays on this machine. Model names and chunk settings belong in
-    "How this works" in the sidebar, not on the front page (see this app's
-    module docstring)."""
-    bits = [f"<span><b>{passages:,}</b> passages indexed</span>",
-            "<span>Philippine medical law</span>"]
-    if local:
-        bits.append("<span>Runs <b>on this computer</b></span>")
-    return f'<div class="hv-meta">{"".join(bits)}</div>'
+    Takes no arguments. It used to lead with the indexed passage count, which is
+    a number the reader cannot act on and cannot check: "8,600 passages" tells a
+    worried person nothing about whether their situation is covered, and invites
+    them to read size as authority. On a console that pull is stronger, not
+    weaker — a readout implies the number was worth reading out.
+
+    It also carried a "PRIVATE BY DESIGN" chip, removed for a sharper reason: it
+    is a claim about the DEPLOYMENT, not about the law, and it is only true while
+    Haven runs on the reader's own machine. Host this for real users and the chip
+    keeps asserting it, silently. A claim a change of hosting can falsify does
+    not belong in permanent chrome.
+    """
+    return ('<div class="hv-meta">'
+            '<span>Philippine <b>medical law</b></span>'
+            '<span>Statutes · regulations · court rulings</span>'
+            '</div>')
 
 
 def label(text: str) -> str:
@@ -172,21 +255,67 @@ def label(text: str) -> str:
     return f'<div class="hv-label">{html.escape(text)}</div>'
 
 
-def source_card(n: int, law: str, section: str, source: str) -> str:
-    """One retrieved passage, as an instrument readout rather than a list item.
+def booting() -> str:
+    """What fills the page while the search models load.
 
-    Everything is escaped: `law`, `section` and `source` come from document
-    metadata built during ingestion, which is derived from fetched files —
-    not content this app authored, and therefore not content it should trust
-    into raw HTML.
+    The first request into a fresh process pays about six seconds of embedder
+    and reranker on CPU (see `app.py::warm_up`), and until now that was six
+    seconds of blank page — which reads as broken rather than as busy, and is
+    the worst possible first impression for a page someone arrived at worried.
+
+    The nucleus is `hud.nucleus()`, the same drawing the ops console uses for
+    its verdict, borrowed here purely as a mark for "working". It is imported
+    rather than reimplemented; see that function.
+
+    Deliberately says nothing about WHAT is loading. "Starting up" is the whole
+    of what a reader can act on, and naming the machinery here would put back
+    exactly what the rest of this page strips out.
+    """
+    return ('<div style="display:flex;flex-direction:column;align-items:center;'
+            'padding:34px 0 10px" role="status" aria-live="polite">'
+            + nucleus(CYAN, "Starting up")
+            + f'<p style="margin:10px 0 0;font-family:{MONO};font-size:.78rem;'
+              f'color:{TEXT_DIM};text-align:center;max-width:34ch;'
+              f'line-height:1.6">This takes a few seconds the first time '
+              f'someone opens the page.</p></div>')
+
+
+def advisory(body_html: str, label_text: str = "Advisory") -> str:
+    """The not-legal-advice panel.
+
+    `body_html` is trusted markup written by `app.py` — a fixed sentence with a
+    `<b>` in it, not user or corpus content. `label_text` is escaped anyway; it
+    costs nothing and this function should stay safe if it is ever called with
+    something dynamic.
+
+    The label is capitals; the body is not. That asymmetry is the point of the
+    function: the console voice announces the panel, and then gets out of the
+    way of the sentence a reader actually has to believe.
+    """
+    return (f'<div class="hv-advisory">'
+            f'<div class="hv-adv-label">{html.escape(label_text)}</div>'
+            f'<p>{body_html}</p></div>')
+
+
+def source_card(n: int, law: str, section: str) -> str:
+    """One passage the answer was drawn from, named the way the law names itself.
+
+    The originating FILENAME used to be printed under each card in monospace
+    (`_fetched/doh/doh-ao-2008-0001-irr-of-ra-9439-…txt`). It is meaningful when
+    tuning the corpus and noise to everyone else — a reader cannot open it and
+    cannot verify anything with it. The whole page is monospace now, which makes
+    a path look even more like it belongs; it still does not.
+
+    Everything is escaped: `law` and `section` come from document metadata built
+    during ingestion, derived from fetched files — not content this app authored,
+    and therefore not content it should trust into raw HTML.
     """
     sec = (f'<div class="hv-sec">{html.escape(section)}</div>'
            if section else "")
     return (
         f'<div class="hv-card">'
-        f'<div class="hv-n">SOURCE {n:02d}</div>'
+        f'<div class="hv-n">{n:02d}</div>'
         f'<div class="hv-law">{html.escape(law or "Untitled document")}</div>'
         f'{sec}'
-        f'<div class="hv-file">{html.escape(source)}</div>'
         f'</div>'
     )

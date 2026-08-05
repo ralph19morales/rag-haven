@@ -78,12 +78,25 @@ import subprocess
 import time
 from pathlib import Path
 
+import altair as alt
 import httpx
 import pandas as pd
 import streamlit as st
 
-from ragmed import config, embeddings, llm, metrics, ocr, rerank, vectorstore
+from ragmed import (config, embeddings, llm, metrics, ocr, rerank,
+                    retriever, vectorstore)
 from ui import hud
+
+
+def _themed(chart: "alt.Chart") -> "alt.Chart":
+    """Put an Altair chart on the HUD ground.
+
+    Applied per chart rather than by registering a global Altair theme: this
+    module shares a process with nothing, but a global theme is interpreter-wide
+    state, and the failure it produces (a chart themed by whichever module
+    imported last) is exactly the kind that is invisible from the server.
+    """
+    return chart.configure(**hud.chart_theme())
 
 st.set_page_config(
     page_title="HAVEN // OPS",
@@ -315,10 +328,10 @@ def index_stats() -> dict:
     if n:
         _, _, metas = vectorstore.all_documents(collection)
         for m in metas:
-            src = m.get("source", "")
-            parts = src.split("/")
-            family = parts[1] if src.startswith("_fetched/") and len(parts) > 1 else parts[0]
-            families[family or "other"] = families.get(family or "other", 0) + 1
+            # Shared with the retriever so the ops view and the per-family
+            # cap cannot drift apart on what a "family" is.
+            family = retriever.source_family(m.get("source", ""))
+            families[family] = families.get(family, 0) + 1
     return {"chunks": n, "families": families}
 
 
@@ -557,13 +570,13 @@ def _live_body() -> None:
     traces = ""
     if _series("gpu_util"):
         traces += hud.sparkline(_series("gpu_util"), "gpu utilisation",
-                                f"{hist[-1]['gpu_util']:.0f} %")
+                                f"{hist[-1]['gpu_util']:.0f} %", unit=" %")
     if _series("kv"):
         traces += hud.sparkline(_series("kv"), "kv cache",
-                                f"{hist[-1]['kv']:.1f} %")
+                                f"{hist[-1]['kv']:.1f} %", unit=" %")
     if _series("mem"):
         traces += hud.sparkline(_series("mem"), "host memory",
-                                f"{hist[-1]['mem']:.0f} %")
+                                f"{hist[-1]['mem']:.0f} %", unit=" %")
     if traces:
         st.html(hud.panel(f"live traces · {len(hist)} samples", traces))
         if len(hist) < 3:
@@ -679,12 +692,17 @@ def _live_body() -> None:
     t1, t2 = st.columns(2, gap="medium")
     with t1:
         st.html(hud.panel("telemetry", (
-            hud.sparkline(recent_first["total_ms"].tolist(), "total",
-                          f"{df['total_ms'].median()/1000:.1f} s median")
-            + hud.sparkline(recent_first["retrieval_ms"].tolist(), "retrieval",
-                            f"{df['retrieval_ms'].median()/1000:.1f} s median")
-            + hud.sparkline(recent_first["generation_ms"].tolist(), "generation",
-                            f"{df['generation_ms'].median()/1000:.1f} s median")
+            hud.sparkline((recent_first["total_ms"] / 1000).tolist(), "total",
+                          f"{df['total_ms'].median()/1000:.1f} s median",
+                          unit=" s")
+            + hud.sparkline((recent_first["retrieval_ms"] / 1000).tolist(),
+                            "retrieval",
+                            f"{df['retrieval_ms'].median()/1000:.1f} s median",
+                            unit=" s")
+            + hud.sparkline((recent_first["generation_ms"] / 1000).tolist(),
+                            "generation",
+                            f"{df['generation_ms'].median()/1000:.1f} s median",
+                            unit=" s")
         )))
     with t2:
         st.html(hud.panel("counters", hud.rows([
@@ -697,15 +715,71 @@ def _live_body() -> None:
         ]) + hud.segbar(1.0 - err_rate, "ok" if err_rate == 0 else "alert")))
         st.caption("Success rate across all logged queries.")
 
+    unit = "hour" if bucket == "h" else "day"
     c1, c2 = st.columns(2)
     with c1:
-        st.caption("Queries per " + ("hour" if bucket == "h" else "day"))
-        vol = df.groupby("bucket").size().rename("queries").to_frame()
-        st.bar_chart(vol, y="queries", height=240)
+        st.caption(f"Queries per {unit}")
+        vol = (df.groupby("bucket").size().rename("queries")
+               .reset_index().rename(columns={"bucket": "when"}))
+        # One series, so one colour and no legend — the caption names it. A
+        # value-ramp across the bars would double-encode height as hue.
+        bars = (
+            alt.Chart(vol)
+            .mark_bar(color=hud.SERIES_1, cornerRadiusTopLeft=3,
+                      cornerRadiusTopRight=3)
+            .encode(
+                x=alt.X("when:T", title=None,
+                        axis=alt.Axis(format="%b %d %H:%M", labelAngle=0,
+                                      tickCount=5)),
+                y=alt.Y("queries:Q", title=f"queries / {unit}",
+                        axis=alt.Axis(tickMinStep=1)),
+                tooltip=[alt.Tooltip("when:T", title=unit.capitalize(),
+                                     format="%b %d %H:%M"),
+                         alt.Tooltip("queries:Q", title="Queries")],
+            )
+            .properties(height=240)
+        )
+        st.altair_chart(_themed(bars), width="stretch")
     with c2:
-        st.caption("Latency by stage (ms, median per bucket)")
-        lat = df.groupby("bucket")[["retrieval_ms", "generation_ms"]].median()
-        st.line_chart(lat, height=240)
+        st.caption("Latency by stage (median per bucket)")
+        # Long form so the two stages are one categorical field: that is what
+        # gives a legend and one shared axis. Both series are milliseconds, so
+        # they belong on that one axis — a second scale for the second stage
+        # would invent a relationship the data does not have.
+        lat = (df.groupby("bucket")[["retrieval_ms", "generation_ms"]].median()
+               .reset_index()
+               .melt("bucket", var_name="stage", value_name="ms")
+               .rename(columns={"bucket": "when"}))
+        lat["stage"] = lat["stage"].map({"retrieval_ms": "retrieval",
+                                         "generation_ms": "generation"})
+        lat["seconds"] = lat["ms"] / 1000.0
+        base = alt.Chart(lat).encode(
+            x=alt.X("when:T", title=None,
+                    axis=alt.Axis(format="%b %d %H:%M", labelAngle=0,
+                                  tickCount=5)),
+            y=alt.Y("seconds:Q", title="seconds"),
+            color=alt.Color("stage:N", title=None,
+                            scale=alt.Scale(domain=["retrieval", "generation"],
+                                            range=list(hud.SERIES))),
+        )
+        # Crosshair + tooltip: the hover layer these charts can have and the
+        # data-URI sparklines cannot.
+        hover = alt.selection_point(fields=["when"], nearest=True,
+                                    on="mouseover", empty=False)
+        line = base.mark_line(strokeWidth=2, point=False, interpolate="monotone")
+        dots = (base.mark_point(size=64, filled=True, opacity=0)
+                .add_params(hover))
+        marks = base.mark_point(size=64, filled=True).transform_filter(hover)
+        rule = (alt.Chart(lat).mark_rule(color=hud.CYAN_DIM, strokeWidth=1)
+                .encode(x="when:T",
+                        tooltip=[alt.Tooltip("when:T", title="When",
+                                             format="%b %d %H:%M"),
+                                 alt.Tooltip("stage:N", title="Stage"),
+                                 alt.Tooltip("seconds:Q", title="Seconds",
+                                             format=".1f")])
+                .transform_filter(hover))
+        chart = (line + dots + marks + rule).properties(height=240)
+        st.altair_chart(_themed(chart), width="stretch")
 
     # Percentiles, not just the median: the median said 15s all through the
     # week the p99 was a minute. A tail is what a client actually notices.
