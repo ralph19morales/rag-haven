@@ -24,6 +24,8 @@ store, and a local LLM. No API keys, no per-question cost.
 common situations to start from ("The hospital won't release my relative's body
 until we pay"), and presents sources in plain language.
 
+![Haven answering a question, with every claim cited to a specific law and section](docs/screenshots/haven-qa.png)
+
 ```bash
 streamlit run app.py
 ```
@@ -47,6 +49,8 @@ line to `data/metrics.jsonl` (local only, git-ignored —
 `METRICS_LOG_QUESTIONS=false` to stop logging question text) — a query is
 logged only once its answer has *finished* generating, which can take up to
 a minute (see [Performance expectations](#performance-expectations)).
+
+![Ops dashboard: VRAM gauge, subsystem health, GPU stats, and configuration invariants](docs/screenshots/dashboard.png)
 
 ```bash
 streamlit run dashboard.py --server.port 8502
@@ -337,3 +341,5 @@ but a particular archive's compilation, formatting and headnotes may not be —
 review those terms before redistributing fetched documents or hosting this
 publicly. The fetcher identifies itself and rate-limits accordingly; please
 keep it that way.
+
+This project is dedicated to my late sister Toni Rose "Chin Chin" Morales
