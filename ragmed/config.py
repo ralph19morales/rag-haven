@@ -293,7 +293,7 @@ HYDE_MAX_TOKENS = _env_int("HYDE_MAX_TOKENS", 128)
 # --- LLM (local, via vLLM — OpenAI-compatible API) --------------------------
 LLM_BASE_URL = _env("LLM_BASE_URL", "http://localhost:8000/v1")
 LLM_API_KEY = _env("LLM_API_KEY", "not-needed")  # vLLM ignores it; the client just requires a non-empty string
-LLM_MODEL = _env("LLM_MODEL", "QuantTrio/Qwen3.6-27B-AWQ")
+LLM_MODEL = _env("LLM_MODEL", "Qwen/Qwen3-14B-AWQ")
 # Qwen3 loops on greedy decode — do not set temperature to 0.
 LLM_TEMPERATURE = float(_env("LLM_TEMPERATURE", "0.7"))
 LLM_TOP_P = float(_env("LLM_TOP_P", "0.95"))
@@ -302,6 +302,11 @@ LLM_MAX_TOKENS = _env_int("LLM_MAX_TOKENS", 1024)  # caps TOTAL generation, not 
 # Measured ~14 tok/s on a 24GB card — a 1024-token answer can take over a
 # minute, so the default client timeout surfaces as a false retrieval failure.
 LLM_TIMEOUT = _env_int("LLM_TIMEOUT", 180)
+# Name of the running vLLM Docker container. Read only by dashboard.py, to
+# `docker inspect` the container's actual launch flags for the config-invariant
+# checks (speculative decoding off, prefix caching on, etc.) — not used to
+# reach the API, which always goes through LLM_BASE_URL.
+VLLM_CONTAINER_NAME = _env("VLLM_CONTAINER_NAME", "vllm-qwen14b")
 # Qwen3.6 is a reasoning model: left on, it spends max_tokens on chain-of-
 # thought (in a separate `reasoning` field) and can return content=None. The
 # retrieved/reranked context has already narrowed the answer, so extended

@@ -19,9 +19,9 @@ python -m venv .venv
 
 # The LLM server is a separate process (see "LLM backend" below) — start it before
 # anything that generates text (ask/chat/app.py). Retrieval-only work doesn't need it.
-docker run -d --name vllm --gpus all --ipc=host \
+docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface -p 8000:8000 \
-  vllm/vllm-openai:latest --model QuantTrio/Qwen3.6-27B-AWQ \
+  vllm/vllm-openai:latest --model Qwen/Qwen3-14B-AWQ \
   --max-model-len 8192 --gpu-memory-utilization 0.93 --max-num-seqs 2 \
   --enforce-eager --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
@@ -111,7 +111,7 @@ unanswerable questions and measuring the gap, not by guessing.
 
 ### LLM backend: vLLM, not Ollama — this is easy to get backwards from old context
 
-The LLM (`Qwen3.6-27B-AWQ`) is served by **vLLM** in Docker, over an OpenAI-compatible API
+The LLM (`Qwen3-14B-AWQ`) is served by **vLLM** in Docker, over an OpenAI-compatible API
 (`ragmed/llm.py` uses the `openai` client, not `ollama`). Everything else in the retrieval stack —
 embeddings (`bge-base-en-v1.5`) and the cross-encoder reranker (`bge-reranker-base`) — runs on
 **CPU**, always, regardless of GPU availability. This is enforced with an explicit `device="cpu"`
@@ -348,7 +348,8 @@ What it checks, and why each category exists:
   new dependency), and engine internals from vLLM's own `/metrics` (KV usage, queue depth, prefix
   cache hit rate, decode rate derived from inter-token latency).
 - **Regression** — the CPU-pinning check, plus **configuration invariants**: the dashboard reads the
-  live container's flags (`docker inspect vllm`) and asserts what this deployment requires —
+  live container's flags (`docker inspect vllm-qwen14b`, name configurable via
+  `VLLM_CONTAINER_NAME`) and asserts what this deployment requires —
   speculative decoding OFF, prefix caching ON, thinking OFF, temperature > 0, `LLM_SEED >= 0`. A
   violation turns the overall verdict red and prints why. This exists because the worst regression
   this project has had passed every liveness probe: latency, GPU and index were all green while

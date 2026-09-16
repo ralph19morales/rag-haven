@@ -83,6 +83,7 @@
   }
   .serif { font-family: var(--font-serif); }
   .mono, code, pre, kbd { font-family: var(--font-mono); }
+  svg text { font-family: var(--font-mono); }
   a { color: var(--accent-ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
   a:hover { color: var(--ink); }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
@@ -401,6 +402,7 @@
       <div class="toc-body">
         <p class="eyebrow" style="margin-top:14px">The Guide</p>
         <ol id="tocList">
+          <li><a href="#arch"><span class="n">00</span><span>Architecture at a glance</span></a></li>
           <li><a href="#s1"><span class="n">01</span><span>The 60-second summary</span></a></li>
           <li><a href="#s2"><span class="n">02</span><span>What problem are we solving?</span></a></li>
           <li><a href="#s3"><span class="n">03</span><span>What is RAG?</span></a></li>
@@ -426,8 +428,8 @@
     <div class="hero">
       <div class="kicker">Retrieval-augmented generation, explained from zero</div>
       <h1 class="serif">A field guide to a legal-research RAG system</h1>
-      <p class="lede">A working system that answers questions about Philippine medical law by reading <strong>real statutes, regulations and Supreme Court decisions</strong> — not an AI's fuzzy memory. This guide assumes <strong>no prior knowledge</strong> and explains every moving part, why it exists, and how a question becomes a cited answer.</p>
-      <p class="lede" style="font-size:1rem">Most RAG walkthroughs stop at "it works." This one also documents the failures — the retrieval bugs, the measurements that caught them, and the approaches tried and abandoned. Those are the parts hardest to find elsewhere.</p>
+      <p class="lede">A working system that answers questions about Philippine medical law by reading <strong>real statutes, regulations and Supreme Court decisions</strong> — not an AI's fuzzy memory. It assumes <strong>no prior knowledge</strong> and explains every moving part.</p>
+      <p class="lede" style="font-size:1rem">Most RAG walkthroughs stop at "it works." This one documents the failures too — the retrieval bugs, the measurements that caught them, and the approaches tried and abandoned. Those are the parts hardest to find elsewhere.</p>
       <figure class="specimen">
         <figcaption class="specimen-label">Specimen — what the system returns</figcaption>
         <p class="specimen-q">"What are the grounds for revoking a physician's certificate of registration?"</p>
@@ -439,70 +441,156 @@
         </p>
       </figure>
       <div class="facts">
-        <span class="fact"><span class="k">Chunks indexed</span><b>7,934</b></span>
+        <span class="fact"><span class="k">Chunks indexed</span><b>8,600</b></span>
         <span class="fact"><span class="k">Source documents</span><b>154</b></span>
         <span class="fact"><span class="k">Source families</span><b>5</b></span>
         <span class="fact"><span class="k">Inference</span><b>On-device</b></span>
       </div>
     </div>
 
+    <!-- ARCHITECTURE -->
+    <section class="doc" id="arch">
+      <div class="sec-head"><span class="num serif">§&nbsp;00</span><h2 class="serif">Architecture at a glance</h2></div>
+      <p class="lead-p">One index, built once offline; one path every question takes. The detail worth staring at: retrieval isn't a single lookup — it's a chain of safeguards (fuse, dedupe, cap by source and by family, reserve slots per clause, rerank, and only then a HyDE redraft if the match is still weak), each added after a specific measured failure, sitting between the search and the model.</p>
+      <div style="overflow-x:auto; margin:0 0 8px; border:1px solid var(--line); background:var(--surface);">
+        <svg width="700" height="640" viewBox="0 0 700 640" role="img" style="display:block"
+             aria-label="Two pipelines share one index. Offline, source files are loaded, with OCR for scanned PDFs, chunked along legal boundaries and tagged with law and section, embedded, and stored in Chroma plus a BM25 index. Online, a question is first rewritten if it depends on prior conversation, then retriever.py runs hybrid dense and lexical search against the same stored index, fuses the results, removes duplicates, caps how much any one document or family of authority can dominate, reserves slots for every clause of a compound question, reranks with a cross-encoder while still guaranteeing the fused top results a place, and drafts a hypothetical answer to redraft the search only if the match is still weak. rag.py then builds a cited prompt and vLLM generates the answer.">
+          <defs>
+            <marker id="har" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"/>
+            </marker>
+            <marker id="hac" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <text x="30" y="14" fill="var(--ink-faint)" font-size="10" letter-spacing="1">OFFLINE — INDEXING · runs when corpus/ changes</text>
+          <text x="290" y="14" fill="var(--ink-faint)" font-size="10" letter-spacing="1">ONLINE — ANSWERING · runs every question</text>
+          <line x1="260" y1="8" x2="260" y2="620" stroke="var(--line)" stroke-width="1" stroke-dasharray="2 5"/>
+
+          <!-- OFFLINE column -->
+          <rect x="30" y="30" width="190" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="125" y="50" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">corpus/ + fetch/seeds*.txt</text>
+          <text x="125" y="66" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">PDF · DOCX · HTML · TXT</text>
+
+          <line x1="125" y1="80" x2="125" y2="94" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="30" y="94" width="190" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="125" y="114" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">loaders.py + ocr.py</text>
+          <text x="125" y="130" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">OCR for scanned PDFs</text>
+
+          <line x1="125" y1="144" x2="125" y2="158" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="30" y="158" width="190" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="125" y="178" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">chunking.py</text>
+          <text x="125" y="194" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">tags every chunk with law + section</text>
+
+          <line x1="125" y1="208" x2="125" y2="222" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="30" y="222" width="190" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="125" y="242" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">embeddings.py</text>
+          <text x="125" y="258" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">bge-base-en-v1.5 · CPU</text>
+
+          <line x1="125" y1="272" x2="125" y2="286" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="30" y="286" width="190" height="62" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+          <text x="125" y="309" text-anchor="middle" fill="var(--accent-ink)" font-size="11" font-weight="600">Chroma + BM25</text>
+          <text x="125" y="325" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">vectorstore.py — the shared index</text>
+          <text x="125" y="339" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">8,600 chunks, 154 documents</text>
+
+          <!-- ONLINE column -->
+          <rect x="290" y="30" width="290" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="435" y="50" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">Question (+ history)</text>
+          <text x="435" y="66" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">a follow-up carries no words of its own</text>
+
+          <line x1="435" y1="80" x2="435" y2="94" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="290" y="94" width="290" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="435" y="114" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">conversation.py</text>
+          <text x="435" y="130" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">rewrites a dependent follow-up first</text>
+
+          <line x1="435" y1="144" x2="435" y2="286" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <path d="M220,317 L290,317" fill="none" stroke="var(--accent)" stroke-width="1.2" marker-end="url(#hac)"/>
+
+          <rect x="290" y="286" width="290" height="100" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
+          <text x="435" y="306" text-anchor="middle" fill="var(--accent-ink)" font-size="11" font-weight="600">retriever.py</text>
+          <text x="435" y="322" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">dense + BM25 → fuse → dedupe</text>
+          <text x="435" y="336" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">→ per-source/-family &amp; per-clause caps → rerank</text>
+          <path d="M540,346 C 600,346 600,378 545,378" fill="none" stroke="var(--brass)" stroke-width="1.2" marker-end="url(#har)"/>
+          <text x="602" y="365" fill="var(--brass-ink)" font-size="9" text-anchor="middle">HyDE draft,</text>
+          <text x="602" y="376" fill="var(--brass-ink)" font-size="9" text-anchor="middle">if still weak</text>
+
+          <line x1="435" y1="386" x2="435" y2="410" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="290" y="410" width="290" height="58" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="435" y="431" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">rag.py</text>
+          <text x="435" y="447" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">cited prompt · PASSAGE N labels</text>
+          <text x="435" y="460" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">strip_source_labels() safety net</text>
+
+          <line x1="435" y1="468" x2="435" y2="488" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="290" y="488" width="290" height="50" fill="var(--paper)" stroke="var(--line)"/>
+          <text x="435" y="508" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">vLLM</text>
+          <text x="435" y="524" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">Qwen3.6-27B-AWQ</text>
+
+          <line x1="435" y1="538" x2="435" y2="562" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
+
+          <rect x="290" y="562" width="290" height="54" fill="var(--paper)" stroke="var(--brass)"/>
+          <text x="435" y="583" text-anchor="middle" fill="var(--brass-ink)" font-size="11" font-weight="600">Answer + sources</text>
+          <text x="435" y="599" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">or an honest refusal if the corpus is silent</text>
+        </svg>
+      </div>
+      <figcaption style="margin:0 0 22px">§8 walks through each safeguard in the accent box above and the specific failure it was added to fix.</figcaption>
+    </section>
+
     <!-- 1 -->
     <section class="doc" id="s1">
       <div class="sec-head"><span class="num serif">§&nbsp;01</span><h2 class="serif">The 60-second summary</h2></div>
-      <p class="lead-p">This is a program that <strong>answers questions about Philippine medical law</strong> by reading a curated collection of real legal documents — instead of relying on an AI's memory, which can be wrong or outdated.</p>
-      <p>It works in two phases:</p>
+      <p class="lead-p">A program that <strong>answers questions about Philippine medical law</strong> by reading a curated collection of real legal documents — instead of relying on an AI's memory, which can be wrong or outdated.</p>
+      <p>Two phases:</p>
       <ul>
-        <li><strong>Indexing</strong> (done once, repeated when documents change): read every document, chop it into passages, and store them in a searchable database.</li>
-        <li><strong>Answering</strong> (every time someone asks something): find the handful of passages most relevant to the question, hand them to a local AI model, and have it write an answer that <strong>cites the specific law and section</strong> it used.</li>
+        <li><strong>Indexing</strong> (once, repeated when documents change): read every document, chop it into passages, store them in a searchable database.</li>
+        <li><strong>Answering</strong> (every question): find the handful of passages most relevant, hand them to a local AI model, have it write an answer that <strong>cites the specific law and section</strong> it used.</li>
       </ul>
       <p>Everything runs <strong>on one machine</strong> — no cloud, no API keys, no per-question cost, and the documents never leave the computer they are indexed on.</p>
       <div class="note warn">
         <span class="tag">⚖️ Not legal advice</span>
-        <p>This is a research tool for retrieving and citing legal texts. It does not interpret the law, does not account for the facts of any particular case, and does not replace a licensed Philippine attorney. Every answer ships with its sources precisely so a human can check them — <strong>verify against the cited text before relying on anything</strong>.</p>
+        <p>A research tool for retrieving and citing legal texts. It does not interpret the law, does not account for the facts of any particular case, and does not replace a licensed Philippine attorney. Every answer ships with its sources precisely so a human can check them — <strong>verify against the cited text before relying on anything</strong>.</p>
       </div>
     </section>
 
     <!-- 2 -->
     <section class="doc" id="s2">
       <div class="sec-head"><span class="num serif">§&nbsp;02</span><h2 class="serif">What problem are we even solving?</h2></div>
-      <p>Imagine you ask a general AI chatbot: <em>"What are the grounds for revoking a physician's license in the Philippines?"</em> A plain chatbot has three problems:</p>
+      <p>Ask a general chatbot <em>"what are the grounds for revoking a physician's license in the Philippines?"</em> and you hit three problems:</p>
       <ol>
-        <li><strong>It might make things up.</strong> Language models produce <em>plausible-sounding</em> text. When they don't know, they often invent a confident-sounding answer — called a <strong>hallucination</strong>. For legal work, a made-up "Section 24" is worse than useless.</li>
-        <li><strong>Its knowledge is frozen and generic.</strong> It learned from the public internet up to some cutoff date. It may not know a 2025 PRC resolution, and it can't read <em>your</em> specific PDFs.</li>
-        <li><strong>You can't verify it.</strong> It won't tell you <em>where</em> an answer came from, so you can't check it against the actual statute.</li>
+        <li><strong>It might make things up.</strong> Language models produce <em>plausible-sounding</em> text; when they don't know, they invent. For legal work a made-up "Section 24" is worse than useless.</li>
+        <li><strong>Its knowledge is frozen and generic.</strong> It may not know a 2025 PRC resolution, and it can't read <em>your</em> PDFs.</li>
+        <li><strong>You can't verify it.</strong> It won't say <em>where</em> an answer came from.</li>
       </ol>
-      <p>What you actually want is an assistant that answers <strong>only from a trusted set of documents you provide</strong>, and <strong>shows its sources</strong>. That is exactly what RAG gives you.</p>
+      <p>What you want is an assistant that answers <strong>only from documents you provide</strong> and <strong>shows its sources</strong>. That is what RAG gives you.</p>
     </section>
 
     <!-- 3 -->
     <section class="doc" id="s3">
       <div class="sec-head"><span class="num serif">§&nbsp;03</span><h2 class="serif">What is RAG? The core idea</h2></div>
-      <p><strong>RAG</strong> stands for <strong>Retrieval-Augmented Generation</strong>. Break it apart:</p>
-      <ul>
-        <li><strong>Generation</strong> = an AI model writing an answer in natural language.</li>
-        <li><strong>Retrieval</strong> = looking up relevant information from a collection of documents.</li>
-        <li><strong>Augmented</strong> = we <em>feed the retrieved information into</em> the AI before it writes, so its answer is grounded in real source material.</li>
-      </ul>
+      <p><strong>R</strong>etrieval (look things up) — <strong>A</strong>ugmented (feed what you found to the model) — <strong>G</strong>eneration (it writes the answer).</p>
       <div class="note">
         <span class="tag">The one-line definition</span>
         <p><strong>RAG = "look up the relevant documents first, then have the AI answer using only those documents."</strong></p>
       </div>
-      <p>The AI is no longer answering from memory — it's answering from an <strong>open book</strong> chosen by whoever curated the corpus. This is why RAG answers can cite sources and rarely hallucinate: the facts sit right in front of the model.</p>
+      <p>The model is no longer answering from memory — it's answering from an <strong>open book</strong> chosen by whoever curated the corpus. That is why RAG answers can cite sources and rarely hallucinate.</p>
       <div class="note">
         <span class="tag">The key insight</span>
-        <p>The AI in a RAG system does <strong>reading comprehension</strong>, not <strong>recall</strong>. Its job is "read these passages and answer," not "remember Philippine law." That's a much easier, safer job — and it's why a modest local model can do legal Q&amp;A well.</p>
+        <p>The model does <strong>reading comprehension</strong>, not <strong>recall</strong>. Its job is "read these passages and answer," not "remember Philippine law" — a much easier, safer job, and why a modest local model can do legal Q&amp;A well.</p>
       </div>
     </section>
 
     <!-- 4 -->
     <section class="doc" id="s4">
       <div class="sec-head"><span class="num serif">§&nbsp;04</span><h2 class="serif">The mental model: a librarian with a research assistant</h2></div>
-      <p>Picture a law library with two staff members:</p>
-      <ul>
-        <li><strong>The Librarian (Retrieval).</strong> You ask a question. They don't answer it — they sprint into the stacks and return with the 6 most relevant pages, sticky-noted. Brilliant at <em>finding</em>, but they don't interpret.</li>
-        <li><strong>The Research Assistant (Generation / the LLM).</strong> They read those 6 pages and write a clear answer — quoting the law and section — and refuse to go beyond what's on the pages.</li>
-      </ul>
-      <p>The whole system is an automated version of this pair, plus a <strong>cataloguing step</strong> done ahead of time so the librarian can find things fast. Keep this picture in mind — every component maps onto it.</p>
+      <p>Picture two staff in a law library. The <strong>librarian (retrieval)</strong> doesn't answer your question — they sprint into the stacks and return with the 6 most relevant pages. The <strong>research assistant (the LLM)</strong> reads those 6 pages, writes a clear answer quoting law and section, and refuses to go beyond what's on them. Add a <strong>cataloguing step</strong> done ahead of time, and that is the whole system.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Real-world role</th><th>In the system</th></tr></thead>
@@ -520,30 +608,23 @@
     <!-- 5 -->
     <section class="doc" id="s5">
       <div class="sec-head"><span class="num serif">§&nbsp;05</span><h2 class="serif">The vocabulary you need</h2></div>
-      <p>Don't memorize — skim now, refer back later.</p>
+      <p>Skim now, refer back later.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Term</th><th>Plain-English meaning</th></tr></thead>
           <tbody>
-            <tr><td>Corpus</td><td>The whole collection of documents the system knows about. Here it lives in <code>corpus/</code>.</td></tr>
-            <tr><td>Document</td><td>One source file — a PDF of a statute, a DOH order, etc.</td></tr>
-            <tr><td>Chunk</td><td>A small slice of a document (a few paragraphs). We search and retrieve <em>chunks</em>, not whole laws — they're too big to feed the AI and too coarse to pinpoint an answer.</td></tr>
-            <tr><td>Embedding</td><td>A list of numbers (a <em>vector</em>) representing the <em>meaning</em> of text. Similar meanings → similar numbers. This lets a computer find text by meaning, not just keywords.</td></tr>
-            <tr><td>Vector</td><td>An array of numbers, e.g. <code>[0.02, -0.51, …]</code>. Yours have 768 numbers each.</td></tr>
-            <tr><td>Vector store</td><td>A database built to store embeddings and instantly find the most similar ones. Yours is <strong>Chroma</strong>.</td></tr>
-            <tr><td>Semantic (dense) search</td><td>Searching by <em>meaning</em> using embeddings. "Revoke a doctor's license" can match "suspension of a certificate of registration" with no shared keywords.</td></tr>
-            <tr><td>Lexical (BM25) search</td><td>Old-school exact-word search. Great for "RA 2382" or "Section 24" where the exact token matters.</td></tr>
-            <tr><td>Hybrid search</td><td>Combining semantic + lexical for the best of both. Yours does this.</td></tr>
-            <tr><td>HyDE</td><td><em>Hypothetical Document Embeddings.</em> When your question is worded nothing like the law, the system has the LLM draft a short <em>imaginary</em> answer in legal vocabulary and searches with that too. You never see the draft — it exists only to supply the terminology your question lacked.</td></tr>
-            <tr><td>Top-K</td><td>How many chunks are handed to the LLM (yours: 6). Every slot spent on a duplicate, or on a fourth passage from the same case, is a slot the answer doesn't get.</td></tr>
-            <tr><td>Bi-encoder vs cross-encoder</td><td>The two ways to compare a question with a chunk. A <strong>bi-encoder</strong> vectorises each <em>separately</em> and compares vectors — fast enough to search everything, but the chunk's vector never saw your question. A <strong>cross-encoder</strong> reads the pair <em>together</em> and scores them directly — far more accurate, far too slow for a whole corpus. Yours uses the first to find ~30 candidates and the second to order them: the <strong>retrieve-then-rerank</strong> pattern.</td></tr>
-            <tr><td>LLM</td><td>The AI that writes the final answer. Yours is <code>Qwen3.6-27B-AWQ</code>, served locally by vLLM.</td></tr>
-            <tr><td>vLLM</td><td>A high-throughput local inference server, serving LLMs over an OpenAI-compatible API — the same engine a production appliance would ship with.</td></tr>
-            <tr><td>Prompt</td><td>The full text sent to the LLM: your question + retrieved passages + instructions.</td></tr>
-            <tr><td>Grounding</td><td>Forcing the AI to answer strictly from provided sources.</td></tr>
-            <tr><td>Hallucination</td><td>When an AI confidently invents false information. RAG + grounding is the defense.</td></tr>
-            <tr><td>OCR</td><td>Turning a <em>scanned image</em> of text into actual searchable text.</td></tr>
-            <tr><td>Ingestion / indexing</td><td>The one-time process of reading documents into the searchable store.</td></tr>
+            <tr><td>Corpus</td><td>Every document the system knows about. Lives in <code>corpus/</code>.</td></tr>
+            <tr><td>Chunk</td><td>A slice of a document, a few paragraphs long. We retrieve <em>chunks</em>, not whole laws — those are too big to feed the model and too coarse to pinpoint an answer.</td></tr>
+            <tr><td>Embedding</td><td>A list of numbers (a <em>vector</em> — yours have 768) representing the <em>meaning</em> of text. Similar meanings → similar numbers, which is what lets a computer search by meaning rather than keyword.</td></tr>
+            <tr><td>Vector store</td><td>A database built to hold embeddings and instantly find the most similar. Yours is <strong>Chroma</strong>.</td></tr>
+            <tr><td>Semantic (dense) search</td><td>Search by <em>meaning</em>. "Revoke a doctor's license" matches "suspension of a certificate of registration" with no shared keywords.</td></tr>
+            <tr><td>Lexical (BM25) search</td><td>Exact-word search. Essential for "RA 2382" or "Section 24", where the token itself matters. <strong>Hybrid</strong> runs both and fuses the scores.</td></tr>
+            <tr><td>HyDE</td><td><em>Hypothetical Document Embeddings.</em> When your question is worded nothing like the law, the LLM drafts a short <em>imaginary</em> answer in legal vocabulary and the system searches with that too. You never see the draft — it only supplies terminology your question lacked.</td></tr>
+            <tr><td>Top-K</td><td>How many chunks reach the LLM (yours: 6). Every slot spent on a duplicate is a slot the answer doesn't get.</td></tr>
+            <tr><td>Bi-encoder vs cross-encoder</td><td>A <strong>bi-encoder</strong> vectorises question and chunk <em>separately</em> — fast enough to search everything, but the chunk's vector never saw your question. A <strong>cross-encoder</strong> reads the pair <em>together</em> — more accurate, far too slow for a corpus. Yours uses the first to find ~30 candidates and the second to order them: <strong>retrieve-then-rerank</strong>.</td></tr>
+            <tr><td>LLM / vLLM</td><td>The model that writes the answer (<code>Qwen3.6-27B-AWQ</code>), served locally by vLLM over an OpenAI-compatible API.</td></tr>
+            <tr><td>Grounding</td><td>Forcing the model to answer strictly from provided sources — the defence against <strong>hallucination</strong>, confidently invented information.</td></tr>
+            <tr><td>OCR</td><td>Turning a <em>scanned image</em> of text into searchable text. Some PRC PDFs are just photos of pages.</td></tr>
           </tbody>
         </table>
       </div>
@@ -552,12 +633,12 @@
     <!-- 6 -->
     <section class="doc" id="s6">
       <div class="sec-head"><span class="num serif">§&nbsp;06</span><h2 class="serif">The two journeys: Indexing vs. Answering</h2></div>
-      <p>This is the single most important thing to internalize. A RAG system has <strong>two completely separate flows</strong>, and confusing them is the #1 beginner stumbling block.</p>
+      <p>The single most important thing to internalize. A RAG system has <strong>two completely separate flows</strong>, and confusing them is the #1 stumbling block.</p>
       <div class="two-cards">
         <div class="jcard">
           <h4 class="serif">Journey A — Indexing</h4>
           <div class="when">Happens rarely</div>
-          <p>Run this when you add or change documents. It reads everything and fills the database. It does <strong>not</strong> answer questions. Think: <em>stocking the library.</em></p>
+          <p>Run when you add or change documents. It fills the database and does <strong>not</strong> answer questions. Think: <em>stocking the library.</em></p>
           <pre><code>documents → read text → cut into
 chunks → embed each chunk →
 store in Chroma</code></pre>
@@ -566,7 +647,7 @@ store in Chroma</code></pre>
         <div class="jcard">
           <h4 class="serif">Journey B — Answering</h4>
           <div class="when">Happens every question</div>
-          <p>Uses the database Journey A already built. It never re-reads your PDFs from scratch. Think: <em>using the library.</em></p>
+          <p>Uses the database Journey A built. It never re-reads your PDFs. Think: <em>using the library.</em></p>
           <pre><code>question → find relevant chunks
 (hybrid search) → build prompt →
 LLM writes cited answer → show sources</code></pre>
@@ -575,89 +656,84 @@ LLM writes cited answer → show sources</code></pre>
       </div>
       <div class="note">
         <span class="tag">Why separate them?</span>
-        <p>Reading and embedding documents is slow and only needs to happen when documents change. Answering must be fast and on demand. Splitting the work means every question reuses the expensive indexing done once. The index described here holds <strong>7,934 chunks from 154 documents</strong>.</p>
+        <p>Reading and embedding is slow and only needed when documents change; answering must be fast and on demand. Splitting the work means every question reuses indexing done once. The index described here holds <strong>8,600 chunks from 154 documents</strong>.</p>
       </div>
     </section>
 
     <!-- 7 -->
     <section class="doc" id="s7">
       <div class="sec-head"><span class="num serif">§&nbsp;07</span><h2 class="serif">Journey A — Building the index, step by step</h2></div>
-      <p>When you run <code>python cli.py ingest</code>, here's the assembly line. Each stop is a real file in <code>ragmed/</code>.</p>
+      <p>What <code>python cli.py ingest</code> does. Each stop is a real file in <code>ragmed/</code>.</p>
       <div class="pipe">
         <div class="step"><div class="s-n">Step 1</div><b>Find the files</b><span class="d">Scan <code>corpus/</code> for PDF, DOCX, TXT, MD, HTML.</span><span class="file">loaders.py</span></div>
         <div class="step"><div class="s-n">Step 2</div><b>Extract text</b><span class="d">Each type gets the right reader; scanned PDFs fall back to OCR automatically.</span><span class="file">loaders.py · ocr.py</span></div>
         <div class="step"><div class="s-n">Step 3</div><b>Cut into chunks</b><span class="d">Split on Section/Article/Rule; tag each with its law + section.</span><span class="file">chunking.py</span></div>
         <div class="step"><div class="s-n">Step 4</div><b>Embed each chunk</b><span class="d">bge model turns text into a 768-number meaning-vector.</span><span class="file">embeddings.py</span></div>
-        <div class="step"><div class="s-n">Step 5</div><b>Store everything</b><span class="d">Chunks + vectors + metadata saved to Chroma; BM25 keyword index built too.</span><span class="file">vectorstore.py</span></div>
+        <div class="step"><div class="s-n">Step 5</div><b>Store everything</b><span class="d">Chunks + vectors + metadata to Chroma; BM25 keyword index built too.</span><span class="file">vectorstore.py</span></div>
       </div>
-      <h3>Step 2 — the OCR twist</h3>
-      <p>If a PDF is a <em>scanned image</em> (just a picture of a page), the normal readers come back nearly empty. Then <strong>OCR kicks in automatically</strong>: each page is rendered to an image and Tesseract "reads" the text off it. This is how the scanned PRC disciplinary-rules PDFs made it into the corpus at all.</p>
-      <h3>Step 3 — why "legal-aware" chunking matters</h3>
-      <p>We don't cut naively every N characters — that would split "Section 24" from its own text. Instead the chunker detects <code>SECTION</code>/<code>ARTICLE</code>/<code>RULE</code> boundaries, recognizes the document's identity (e.g. "Republic Act No. 2382"), and tags every chunk with its <strong>law</strong> and <strong>section</strong>. That metadata is what lets an answer say <em>"(Republic Act No. 2382, Sec. 24)"</em>. Chunks target ~1,100 characters with 150 characters of overlap so an answer never falls in the crack between two chunks.</p>
+      <h3>Why "legal-aware" chunking matters</h3>
+      <p>Cutting naively every N characters would split "Section 24" from its own text. Instead the chunker detects <code>SECTION</code>/<code>ARTICLE</code>/<code>RULE</code> boundaries, recognises the document's identity ("Republic Act No. 2382"), and tags every chunk with its <strong>law</strong> and <strong>section</strong> — the metadata that lets an answer say <em>"(Republic Act No. 2382, Sec. 24)"</em>. Chunks target ~1,100 characters with 150 of overlap, so an answer never falls in the crack between two.</p>
+      <div class="note warn">
+        <span class="tag">A document with no headings gets no structure at all</span>
+        <p>Most of this corpus has none the pattern recognises — DOH and PRC issuances head their parts "I. Rationale", Supreme Court decisions have no section headers — so <strong>632 chunks across 19 files</strong> fall to a size-based split instead. That fallback used to cut at raw character offsets, landing mid-word. The damage isn't cosmetic: <strong>the chunk's embedding is diluted by whatever the window happened to scoop up</strong>, and one operative sentence sharing a chunk with insurance boilerplate ranked 9th in fusion as a result. Splits now fall back through paragraph break → line break → sentence end → space, in <em>both</em> directions — the overlap rewind is plain arithmetic and otherwise re-severs a word at the head of the next chunk.</p>
+      </div>
       <div class="note">
         <span class="tag">After indexing</span>
-        <p>The <code>corpus/</code> PDFs aren't needed to answer questions anymore — everything lives in <code>data/</code>.</p>
+        <p>The <code>corpus/</code> PDFs aren't needed to answer questions — everything lives in <code>data/</code>.</p>
       </div>
     </section>
 
     <!-- 8 -->
     <section class="doc" id="s8">
       <div class="sec-head"><span class="num serif">§&nbsp;08</span><h2 class="serif">Journey B — Answering a question, step by step</h2></div>
-      <p>When you run <code>python cli.py ask "…"</code>, here's what happens.</p>
+      <p>Every stage below exists because of a measured failure, not because it sounded good.</p>
       <ol>
-        <li><strong>Understand the question as a vector.</strong> Your question is embedded with the <em>same</em> bge model, so it lives in the same "meaning space" as the chunks.</li>
-        <li><strong>Retrieve two ways.</strong> The librarian runs a <strong>dense</strong> (semantic) search in Chroma <em>and</em> a <strong>lexical</strong> (BM25 keyword) search — ~25 candidates each.</li>
-        <li><strong>Fuse the lists.</strong> Each candidate gets a combined score:
-          <pre style="margin-top:10px"><code>final_score = 0.6 × (semantic score)
-            + 0.4 × (keyword score)</code></pre>
-          Both score sets are normalized to 0–1 first. This <strong>hybrid</strong> approach handles fuzzy conceptual questions <em>and</em> precise citation lookups.</li>
-        <li><strong>Clean the ranking before cutting it.</strong> A raw ranking isn't safe to hand over yet. Two filters run, both added after real failures:
+        <li><strong>Understand the question as a vector.</strong> Embedded with the <em>same</em> bge model, so it lives in the same meaning-space as the chunks.</li>
+        <li><strong>Retrieve two ways.</strong> A <strong>dense</strong> (semantic) search in Chroma <em>and</em> a <strong>lexical</strong> (BM25) search — ~25 candidates each.</li>
+        <li><strong>Fuse the lists.</strong> <code>0.6 × semantic + 0.4 × keyword</code>, each normalized to 0–1 first. Hybrid handles fuzzy conceptual questions <em>and</em> precise citation lookups.</li>
+        <li><strong>Clean the ranking before cutting it.</strong> Two filters, both added after real failures:
           <ul>
-            <li><strong>Drop exact duplicates.</strong> Legal corpora hold the same passage twice by design — a resolution on reconsideration reprints the decision it modifies. Identical text scores identically, so copies sit adjacent and eat slots in pairs. One case once took <strong>6 of 10 slots as three duplicate pairs</strong>.</li>
-            <li><strong>Cap any one document</strong> (<code>MAX_CHUNKS_PER_SOURCE</code>, default 3). The subtler cousin: not duplicate text, but one landmark case genuinely discussing its doctrine across a dozen passages and out-scoring everything on all of them. Before the cap, <em>"what is informed consent"</em> filled <strong>8 of 10 slots with a single case</strong> — 3 distinct documents in the whole context. Across ten test questions the top document's share averaged <strong>47%</strong>; capped, it's <strong>28%</strong>.</li>
+            <li><strong>Drop exact duplicates.</strong> Legal corpora hold the same passage twice by design — a resolution on reconsideration reprints the decision it modifies. Identical text scores identically, so copies sit adjacent and eat slots in pairs: one case took <strong>6 of 10 slots as three duplicate pairs</strong>.</li>
+            <li><strong>Cap any one document</strong> (<code>MAX_CHUNKS_PER_SOURCE</code>, default 3). Not duplicate text — one landmark case genuinely discussing its doctrine across a dozen passages and out-scoring everything on all of them. Before the cap, <em>"what is informed consent"</em> filled <strong>8 of 10 slots with a single case</strong>. Top-document share across ten test questions: <strong>47% → 28%</strong>.</li>
+            <li><strong>Cap any one <em>family</em></strong> of authority. A per-file cap is not a per-authority cap: three different case files, one chunk each, still held four of six slots on a question a statute answered. Capping the corpus family (statutes / jurisprudence / DOH / PRC / billing) is what let a statute and its implementing rules occupy the context together — the prohibition lives in one, the procedure in the other.</li>
           </ul>
-          The cap <em>demotes</em> rather than deletes — once every document has had its three, held-back chunks return to fill remaining slots. A question only one statute answers still gets a full context.</li>
-        <li><strong>Ask the right question of each chunk — the reranker.</strong> Everything so far compares <em>two vectors</em>: one for your question, one computed for each chunk long before your question existed. That speed is what makes searching 7,900 chunks possible, and it is also the ceiling — a chunk's vector never saw your question, so "is about similar things" and "actually answers this" score alike. Measured here, one question scored <strong>eight different chunks inside a 1.4% spread</strong>, with the rule that answered it sitting 5th.
-          <p style="margin-top:8px">A <strong>cross-encoder</strong> reads your question and one chunk <em>together</em> and scores whether the passage answers it. Far too slow for a whole corpus — which is why it runs over the ~30 candidates retrieval already narrowed to. On those chunks tied within 1.4%, it separated the right one by <strong>0.1975</strong>.</p>
-          <p style="margin-top:8px">Two safeguards, both from things going wrong: it <strong>fails open</strong> (model won't load → previous ordering stands), and it <strong>ignores itself when it has nothing to say</strong> — asked a two-part question the cross-encoder returned every candidate within <strong>0.0004</strong> of 0.5000, and sorting that noise promoted an unrelated case to rank 1. Reranking runs <em>before</em> the cap, or the cap would already have chosen which chunks survive using the very scores the reranker exists to correct.</p></li>
-        <li><strong>Guarantee every part of a compound question is heard.</strong> Scores are normalized <em>against the whole question</em>, so chunks answering the neglected half rank below chunks matching the dominant half however many candidates you fetch. Measured: the top twelve results all scored ≥0.894 and were <em>all</em> one half of the question.
-          <p style="margin-top:8px">The tempting fix fails — raising <code>CANDIDATE_K</code> surfaced the missing half at 60 and <strong>lost it again at 120</strong>, because a bigger pool moves the normalization window. A number that works at one value and fails at double is fitted to one question, not a fix. So each <strong>ask</strong> gets its own search and is guaranteed <code>MIN_CHUNKS_PER_CLAUSE</code> slots — a <em>floor, not a quota</em>. Only then are the top 6 kept.</p></li>
-        <li><strong>If the question doesn't speak the corpus's language — HyDE.</strong> A lay narrative (<em>"they kept changing their story about my mother"</em>) embeds nowhere near terse statutory text and gives BM25 no distinctive words. Retrieval returns noise and the system refuses — which <em>looks</em> like honesty and is actually a bug. So the LLM drafts a short <em>imaginary</em> answer in legal vocabulary and the system searches with that too. You never see the draft; its only job is supplying the terminology your question lacked. It's forbidden from inventing section numbers — a fabricated "Article 2200" is a real token BM25 matches hard, aiming retrieval confidently at the wrong law.
-          <p>It fires on two triggers: when the <em>whole question</em> matches poorly, and when any single <em>ask</em> does. The second exists because the first structurally cannot see a compound question — similarity over a whole question is a <strong>maximum</strong>, so one well-matched half hides the other. <em>"Can we refuse to release the body… who can we collect from, and is there a deadline?"</em> scored a healthy 0.736 on its first half alone; HyDE stayed off, the estate-claim half was never retrieved, and the answer <strong>flatly denied a deadline the Rules of Court impose</strong>. Note the failure mode: not a refusal — a fluent wrong answer.</p></li>
-        <li><strong>Remember the conversation.</strong> Haven holds the session so follow-ups work — which is two problems, not one. <strong>Retrieval breaks first:</strong> "And is there a deadline?" carries none of the words that say what it is about, so searched as written it finds noise, and by the time history reaches the prompt retrieval has already failed. A dependent follow-up is therefore <em>rewritten into a standalone question before searching</em> — resolving references only, never adding terminology or facts you did not say.
-          <p style="margin-top:8px">And one risk larger here than in an ordinary chatbot: once Haven's earlier answers sit in the prompt they become a second apparent source, and it will cite a provision it "remembers stating" with no retrieved passage behind it — a citation a reader cannot tell from a real one. Three defences: the block is labelled <em>"for reference only — not a source, never cite it"</em>; a system-prompt rule forbids citing it or carrying a citation between turns; and the retrieved passages sit <strong>nearer the question</strong> than the history, the position the model weighs most. History is bounded, and every step fails open.</p></li>
-        <li><strong>Build the prompt.</strong> Three parts: a <strong>system prompt</strong> (the rulebook — answer only from context, cite law &amp; section, admit when the corpus is silent), the <strong>context</strong> (the 6 chunks, each labeled with law/section/source), and <strong>your question</strong>.</li>
-        <li><strong>The LLM writes the answer.</strong> vLLM serves <code>Qwen3.6-27B-AWQ</code> locally over an OpenAI-compatible API and streams a grounded, cited answer. Sampling is <em>not</em> greedy (<code>temperature=0.7</code>, <code>top_p=0.95</code>, <code>top_k=20</code>) — Qwen3-family models loop on repeated tokens under greedy decoding, so temperature-0 "for more factual output" actually breaks generation. Thinking mode is explicitly off (<code>enable_thinking: False</code>): left on, this reasoning model burns its token budget on chain-of-thought and can return no content at all — observed directly during setup, where a two-sentence question spent 200 tokens reasoning and answered nothing.</li>
-        <li><strong>Show answer + sources.</strong> You get the answer plus the list of source chunks (law, section, filename, relevance score) so you can verify every point.</li>
+          Caps <em>demote</em> rather than delete: once every document has had its three, held-back chunks return to fill remaining slots, so a question only one statute answers still gets a full context.</li>
+        <li><strong>Ask the right question of each chunk — the reranker.</strong> Everything so far compares two vectors, one computed long before your question existed. That is the ceiling: "is about similar things" and "actually answers this" score alike. Measured, one question scored <strong>eight chunks inside a 1.4% spread</strong>, with the rule that answered it 5th; a <strong>cross-encoder</strong>, reading question and chunk <em>together</em>, separated the right one by <strong>0.1975</strong>. Too slow for a corpus, so it runs only over the ~30 candidates retrieval narrowed to — and <em>before</em> the caps, or the caps would pick survivors using the very scores it exists to correct. Two safeguards from things going wrong: it <strong>fails open</strong>, and it <strong>ignores itself when it has nothing to say</strong> — on one question every candidate came back within <strong>0.0004</strong> of 0.5000, and sorting that noise promoted an unrelated case to rank 1.</li>
+        <li><strong>But the reranker reorders; it does not overrule.</strong> It is weak on terse statutory text matched against a lay narrative — four lines of prohibition read as less responsive than pages of judicial discussion. Asked <em>"the hospital won't release my relative's body until we pay"</em>, fusion ranked the controlling statute <strong>3rd</strong> and the cross-encoder demoted it to <strong>17th</strong>; five of six slots went to case law and the system answered <strong>the exact inverse of the law</strong>. So the fused top-4 are guaranteed a final place. When two signals disagree and each is right in a different regime, reserve capacity rather than tuning their scores against each other.</li>
+        <li><strong>Guarantee every part of a compound question is heard.</strong> Scores are normalized <em>against the whole question</em>, so chunks answering the neglected half rank below chunks matching the dominant half however many candidates you fetch — measured, the top twelve all scored ≥0.894 and were <em>all</em> one half. The tempting fix fails: raising <code>CANDIDATE_K</code> surfaced the missing half at 60 and <strong>lost it again at 120</strong>, because a bigger pool moves the normalization window. A number that works at one value and fails at double is fitted to one question. So each <strong>ask</strong> gets its own search and a guaranteed floor of slots.</li>
+        <li><strong>If the question doesn't speak the corpus's language — HyDE.</strong> A lay narrative embeds nowhere near terse statutory text and gives BM25 no distinctive words; retrieval returns noise and the system refuses, which <em>looks</em> like honesty and is a bug. So the LLM drafts a short imaginary answer in legal vocabulary and the system searches with that too — forbidden from inventing section numbers, since a fabricated "Article 2200" is a real token BM25 matches hard, aiming retrieval confidently at the wrong law. It fires when the <em>whole question</em> matches poorly <em>and</em> when any single <em>ask</em> does; the second trigger exists because similarity over a whole question is a <strong>maximum</strong>, so one well-matched half hides the other. One question scored a healthy 0.736 on its first half alone, HyDE stayed off, the second half was never retrieved, and the answer <strong>flatly denied a deadline the Rules of Court impose</strong>.</li>
+        <li><strong>Remember the conversation.</strong> "And is there a deadline?" carries none of the words that say what it is about, so a dependent follow-up is <em>rewritten into a standalone question before searching</em> — resolving references only, never adding terminology or facts you did not say. And a risk larger here than in an ordinary chatbot: once earlier answers sit in the prompt they become a second apparent source, and the model will cite a provision it "remembers stating" with no retrieved passage behind it. Three defences — the block is labelled <em>"not a source, never cite it"</em>, a prompt rule forbids carrying a citation between turns, and the retrieved passages sit <strong>nearer the question</strong> than the history.</li>
+        <li><strong>Build the prompt.</strong> A <strong>system prompt</strong> (answer only from context, cite law &amp; section, admit when the corpus is silent), the <strong>context</strong> (6 chunks, each labelled with its law and section), and <strong>your question</strong>.</li>
+        <li><strong>The LLM writes the answer.</strong> vLLM streams from <code>Qwen3.6-27B-AWQ</code> locally. Sampling is deliberately <em>not</em> greedy (<code>temperature=0.7</code>) — Qwen3-family models loop on repeated tokens under greedy decoding, so temperature-0 "for more factual output" breaks generation here. Thinking mode is off: left on, this reasoning model burns its budget on chain-of-thought and can return no content at all.</li>
+        <li><strong>Show answer + sources</strong>, so every point can be checked.</li>
       </ol>
-      <div class="note">
-        <span class="tag">The honesty guarantee</span>
-        <p>Because the model is told to answer only from the retrieved text and to admit when the corpus is silent, you get "I don't have that" instead of a confident fabrication. That's the whole point of RAG for legal work.</p>
+      <div class="note warn">
+        <span class="tag">The lesson worth keeping</span>
+        <p>A corpus can contain the right law, retrieval can rank it correctly, and the system can still answer the opposite — because a later stage silently overruled an earlier one. <strong>When an answer is wrong, trace the ranking stage by stage before assuming the corpus is missing something.</strong></p>
+        <p>And one stage further back: <em>"the right document is in the context"</em> is not <em>"the operative sentence is in the context"</em>. The body-release failure above was first diagnosed as a prompt problem, assuming the sentence granting the entitlement had reached the model. It hadn't — what reached it was the offence-<em>elements</em> list from the same file, which reads exactly like a checklist of conditions the family must satisfy. Every "is the right file present?" check was green throughout.</p>
       </div>
     </section>
 
     <!-- 9 -->
     <section class="doc" id="s9">
       <div class="sec-head"><span class="num serif">§&nbsp;09</span><h2 class="serif">A tour of every file</h2></div>
-      <p>Think of <code>ragmed/</code> as the <em>engine</em>, and <code>cli.py</code> / <code>app.py</code> as the <em>steering wheels</em>.</p>
-      <h3>The engine — <code>ragmed/</code></h3>
+      <p><code>ragmed/</code> is the <em>engine</em>; <code>cli.py</code> and <code>app.py</code> are the <em>steering wheels</em>.</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>File</th><th>Plain-English job</th></tr></thead>
+          <thead><tr><th>File</th><th>Job</th></tr></thead>
           <tbody>
-            <tr><td><code>config.py</code></td><td>The single control panel — every setting lives here, overridable via <code>.env</code>. Start here to change behavior.</td></tr>
-            <tr><td><code>loaders.py</code></td><td>Turns any supported file into clean text. Calls OCR when a PDF is scanned.</td></tr>
-            <tr><td><code>ocr.py</code></td><td>Reads text off scanned PDFs by rendering pages to images and running Tesseract.</td></tr>
-            <tr><td><code>chunking.py</code></td><td>Cuts documents along legal boundaries and tags each chunk with law + section.</td></tr>
-            <tr><td><code>embeddings.py</code></td><td>Converts text ↔ meaning-vectors using the local bge model.</td></tr>
-            <tr><td><code>vectorstore.py</code></td><td>Talks to Chroma: create, add, search, count.</td></tr>
-            <tr><td><code>retriever.py</code></td><td>The hybrid search brain: dense + BM25, then fuse, rerank, cap, reserve per-ask slots, and rank.</td></tr>
-            <tr><td><code>rerank.py</code></td><td>The cross-encoder that re-scores candidates by reading question and chunk together. Fails open — if the model won't load, retrieval's ordering stands.</td></tr>
-            <tr><td><code>conversation.py</code></td><td>Session memory: rewrites dependent follow-ups into standalone search queries, and fences replayed turns so they cannot be cited as a source.</td></tr>
-            <tr><td><code>llm.py</code></td><td>Talks to vLLM over its OpenAI-compatible API; checks the server is up and the configured model is loaded.</td></tr>
-            <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → get the answer. Holds the system prompt. Also times retrieval and generation and hands them to <code>metrics.py</code> after every answer.</td></tr>
-            <tr><td><code>metrics.py</code></td><td>Appends one JSON line per answered question to <code>data/metrics.jsonl</code> (timings, chunk count, HyDE fired, error) — read by <code>dashboard.py</code>. Best-effort: a write failure never breaks an answer.</td></tr>
-            <tr><td><code>ingest.py</code></td><td>The indexing pipeline that runs Journey A over the whole corpus.</td></tr>
+            <tr><td><code>config.py</code></td><td>The control panel — every setting, overridable via <code>.env</code>. Start here.</td></tr>
+            <tr><td><code>loaders.py</code> · <code>ocr.py</code></td><td>Any supported file → clean text. OCR renders scanned pages to images and runs Tesseract.</td></tr>
+            <tr><td><code>chunking.py</code></td><td>Cuts along legal boundaries; tags each chunk with law + section.</td></tr>
+            <tr><td><code>embeddings.py</code></td><td>Text ↔ meaning-vectors, via the local bge model. Pinned to CPU.</td></tr>
+            <tr><td><code>vectorstore.py</code></td><td>Chroma: create, add, search, count.</td></tr>
+            <tr><td><code>retriever.py</code></td><td>The hybrid search brain: dense + BM25, fuse, rerank, cap, reserve per-ask slots, rank.</td></tr>
+            <tr><td><code>rerank.py</code></td><td>The cross-encoder. Fails open — if the model won't load, retrieval's ordering stands.</td></tr>
+            <tr><td><code>conversation.py</code></td><td>Rewrites dependent follow-ups into standalone queries; fences replayed turns so they can't be cited.</td></tr>
+            <tr><td><code>llm.py</code></td><td>Talks to vLLM; checks the server is up and the configured model is loaded.</td></tr>
+            <tr><td><code>rag.py</code></td><td>The conductor: retrieve → build the grounded prompt → answer. Holds the system prompt.</td></tr>
+            <tr><td><code>metrics.py</code></td><td>One JSON line per answered question to <code>data/metrics.jsonl</code>. Best-effort; a write failure never breaks an answer.</td></tr>
+            <tr><td><code>ingest.py</code></td><td>Runs Journey A over the whole corpus.</td></tr>
           </tbody>
         </table>
       </div>
@@ -666,55 +742,40 @@ LLM writes cited answer → show sources</code></pre>
         <table>
           <thead><tr><th>File / folder</th><th>Job</th></tr></thead>
           <tbody>
-            <tr><td><code>cli.py</code></td><td>Command line: <code>ingest</code>, <code>ask</code>, <code>chat</code>, <code>status</code>. Your main tool.</td></tr>
-            <tr><td><code>app.py</code></td><td>A Streamlit web chat UI — same engine, friendlier face, with expandable citations.</td></tr>
-            <tr><td><code>dashboard.py</code></td><td>A separate Streamlit <strong>ops dashboard</strong> (<code>streamlit run dashboard.py --server.port 8502</code>) — LLM/GPU/index health and query metrics, for whoever operates the box rather than the end user.</td></tr>
-            <tr><td><code>fetch/fetch_seeds.py</code></td><td>Downloads documents from a seed list into <code>corpus/_fetched/</code>; robust against flaky gov sites.</td></tr>
-            <tr><td><code>fetch/seeds*.txt</code></td><td>Curated source lists: statutes (LawPhil), PRC and DOH issuances, jurisprudence, and the bills/payment/non-payment bundles.</td></tr>
-            <tr><td><code>fetch/split_rules_of_court.py</code></td><td><strong>Run after fetching the Rules of Court.</strong> LawPhil serves Rules 72–109 as one 148k-character page; this splits it into one file per rule so each is citable. See §13.</td></tr>
-            <tr><td><code>tests/</code></td><td>164 checks, each encoding a bug that shipped once — duplicate crowding, the per-source cap, per-ask slot reservation, the reranker's fail-open and flat-score guards, the HyDE clause gate, citation labelling, the fetcher's retry budget, conversation grounding.</td></tr>
-            <tr><td><code>corpus/</code></td><td>Your source documents — the input.</td></tr>
-            <tr><td><code>data/</code></td><td>The Chroma vector DB + BM25 cache. Auto-generated.</td></tr>
+            <tr><td><code>cli.py</code></td><td><code>ingest</code>, <code>ask</code>, <code>chat</code>, <code>status</code>. Your main tool.</td></tr>
+            <tr><td><code>app.py</code></td><td>Streamlit web chat — same engine, friendlier face, expandable citations.</td></tr>
+            <tr><td><code>dashboard.py</code></td><td>Separate ops dashboard on its own port: LLM/GPU/index health and query metrics, for whoever operates the box.</td></tr>
+            <tr><td><code>fetch/</code></td><td>The document fetcher, curated seed lists, and <code>split_rules_of_court.py</code> — <strong>run that after fetching the Rules of Court</strong> (see §13).</td></tr>
+            <tr><td><code>tests/</code></td><td>308 checks, each encoding a bug that shipped once — duplicate crowding, the caps, per-ask slots, the reranker's fail-open and flat-score guards, the HyDE clause gate, citation labelling, conversation grounding.</td></tr>
+            <tr><td><code>corpus/</code> · <code>data/</code></td><td>Your source documents (the input) and the Chroma DB + BM25 cache (auto-generated).</td></tr>
           </tbody>
         </table>
       </div>
       <div class="note warn">
         <span class="tag">Precious vs. regenerable</span>
-        <p><code>corpus/</code> (your documents) and the code are <strong>precious</strong>. <code>data/</code>, <code>.venv/</code>, and <code>corpus/_fetched/</code> are <strong>regenerable</strong> — delete them and rebuild with <code>pip install</code> + <code>fetch</code> + <code>ingest</code>. That's why they're git-ignored.</p>
+        <p><code>corpus/</code> and the code are <strong>precious</strong>. <code>data/</code>, <code>.venv/</code> and <code>corpus/_fetched/</code> are <strong>regenerable</strong> — delete and rebuild with <code>pip install</code> + <code>fetch</code> + <code>ingest</code>. That's why they're git-ignored.</p>
       </div>
     </section>
 
     <!-- 10 -->
     <section class="doc" id="s10">
-      <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why we chose each technology</h2></div>
-      <h3>Why "fully local / offline"?</h3>
-      <p>A deliberate trade: <strong>privacy</strong> (documents never leave the machine), <strong>no API keys</strong>, <strong>no per-question cost</strong>, works without internet once set up. The cost: a GPU with meaningful VRAM, a Docker install, and Tesseract for OCR. On a 24GB consumer card generation runs at ~19 tok/s, putting a complete answer at roughly 20–30 seconds. Embeddings and reranking still run on CPU regardless of GPU size (see the callout below). For legal research over sensitive or proprietary documents, privacy plus zero marginal cost is usually the right call — for public documents at high volume, a cloud backend is the reasonable choice, and the engine is written to swap.</p>
-      <h3>Why vLLM + Qwen3.6-27B-AWQ?</h3>
-      <p>vLLM is what a production/appliance deployment of this kind of system actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime that transfers unchanged to client hardware. <code>Qwen3.6-27B-AWQ</code> is a 4-bit-quantized 27B model; AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the real resident footprint on a 24GB card is <strong>19.05&nbsp;GiB</strong> — more than the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number that doesn't transfer to vLLM's AWQ path. Swap the model with one flag (<code>--model</code>) and a matching <code>LLM_MODEL</code> in <code>.env</code>.</p>
-      <h3>Why bge-base for embeddings?</h3>
-      <p><code>BAAI/bge-base-en-v1.5</code> is a well-regarded open embedding model with a great quality-to-speed balance on CPU. Drop to <code>bge-small</code> (faster) or <code>bge-large</code> (more accurate) via <code>EMBED_MODEL</code>.</p>
-      <div class="note">
-        <span class="tag">Why CPU, specifically, and why it matters now</span>
-        <p>Embeddings and the reranker (<code>embeddings.py</code>, <code>rerank.py</code>) are explicitly pinned to <code>device="cpu"</code> in code, not left to whatever PyTorch picks. This didn't matter under Ollama, which ran on CPU too — but vLLM claims most of the GPU by design (<code>--gpu-memory-utilization 0.93</code>, under a gigabyte left free), so a model that auto-detects CUDA hits an out-of-memory crash mid-query instead of gracefully falling back. This shipped once: the embedder's offline-fallback path and the reranker's loader both omitted the pin, so a Hugging Face Hub hiccup (or, for the reranker, every load) sent them straight into the wall vLLM had already built.</p>
+      <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why each technology</h2></div>
+      <h3>Fully local</h3>
+      <p>A deliberate trade: privacy, no API keys, no per-question cost, works without internet once set up. The cost is a GPU with meaningful VRAM, Docker, and Tesseract. For legal research over sensitive documents, privacy plus zero marginal cost is usually right; for public documents at high volume a cloud backend is reasonable, and the engine is written to swap.</p>
+      <h3>vLLM + Qwen3.6-27B-AWQ</h3>
+      <p>vLLM is what an appliance deployment actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime. AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the resident footprint is <strong>19.05&nbsp;GiB</strong>, not the commonly-quoted "27B fits in ~17GB" — that is a GGUF/llama.cpp number and doesn't transfer. Swap models with one flag plus a matching <code>LLM_MODEL</code>.</p>
+      <h3>bge-base, Chroma, hybrid retrieval</h3>
+      <p><code>bge-base-en-v1.5</code> has a good quality-to-speed balance on CPU; go <code>bge-small</code> or <code>bge-large</code> via <code>EMBED_MODEL</code>. Chroma is a local, persistent, zero-config vector database — no separate server. And hybrid retrieval matters especially for law: "RA 2382", "Section 24" must match exactly, while semantic search catches the paraphrases keyword search misses.</p>
+      <div class="note warn">
+        <span class="tag">Why the small models are pinned to CPU</span>
+        <p><code>embeddings.py</code> and <code>rerank.py</code> set <code>device="cpu"</code> explicitly rather than letting PyTorch pick. This didn't matter under a CPU-only backend — but vLLM claims most of the GPU by design (<code>--gpu-memory-utilization 0.93</code>, under a gigabyte left free), so anything that auto-detects CUDA hits an out-of-memory crash mid-query instead of falling back. This shipped once: the embedder's offline-fallback path and the reranker's loader both omitted the pin. <strong>Keep the pin on every load path, including fallbacks.</strong></p>
       </div>
-      <h3>Why Chroma?</h3>
-      <p>A local, persistent, zero-config vector database — it just writes to <code>data/chroma/</code>. No separate server. Perfect for a single-machine project.</p>
-      <h3>Why <em>hybrid</em> retrieval?</h3>
-      <p>Legal questions are special: exact tokens matter enormously. "RA 2382", "Section 24", "PRC" must match precisely — and pure semantic search can miss exact identifiers, while pure keyword search misses paraphrases. Combining both covers both needs. A genuinely important choice for a <em>legal</em> RAG.</p>
-      <h3>Why legal-aware chunking &amp; OCR?</h3>
-      <p>A citation is only useful if it points to the right Section — so we split on structure and tag law + section. And many official PRC/DOH documents are <em>scanned images</em>; OCR makes them searchable, including the disciplinary-procedure rules most relevant to "PRC complaints."</p>
     </section>
 
     <!-- 11 -->
     <section class="doc" id="s11">
       <div class="sec-head"><span class="num serif">§&nbsp;11</span><h2 class="serif">How to actually use it</h2></div>
-      <p>Run everything from the project folder using the venv's Python: <code>.\.venv\Scripts\python.exe</code>.</p>
-      <p class="pre-label">One-time setup</p>
-      <pre><code># Python libraries
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# Tesseract for OCR — needed for scanned PDFs</code></pre>
-      <p class="pre-label">vLLM — needs Docker + an NVIDIA GPU (run separately; see HAVEN_VLLM_MIGRATION.md §5 for why each flag is there)</p>
+      <p class="pre-label">vLLM — Docker + an NVIDIA GPU. Every flag is load-bearing.</p>
       <pre><code>docker run -d --name vllm --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -p 8000:8000 \
@@ -731,82 +792,66 @@ LLM writes cited answer → show sources</code></pre>
 
 docker update --restart unless-stopped vllm</code></pre>
       <p class="pre-label">Everyday commands</p>
-      <pre><code># Health check: index size, is vLLM up?, OCR ready?
-.\.venv\Scripts\python.exe cli.py status
+      <pre><code>python cli.py status              # index size, is vLLM up?, OCR ready?
 
-# Build / refresh the index after adding documents
-.\.venv\Scripts\python.exe cli.py ingest          # add & update
-.\.venv\Scripts\python.exe cli.py ingest --reset  # wipe & rebuild
+python cli.py ingest              # add &amp; update
+python cli.py ingest --reset      # wipe &amp; rebuild
 
-# Ask one question
-.\.venv\Scripts\python.exe cli.py ask "What are the grounds for revoking a physician's certificate?"
+python cli.py ask "What are the grounds for revoking a physician's certificate?"
+python cli.py chat                # conversation mode
 
-# Conversation mode
-.\.venv\Scripts\python.exe cli.py chat
-
-# Web chat interface (opens in browser)
-.\.venv\Scripts\python.exe -m streamlit run app.py
-
-# Ops dashboard — separate app, separate port; see §14 for what it shows
-.\.venv\Scripts\python.exe -m streamlit run dashboard.py --server.port 8502</code></pre>
+streamlit run app.py                            # web chat
+streamlit run dashboard.py --server.port 8502   # ops dashboard</code></pre>
       <div class="note warn">
         <span class="tag">Golden rule</span>
-        <p>Whenever you add, remove, or change documents in <code>corpus/</code>, run <code>ingest</code> again. The index doesn't update itself.</p>
+        <p>Whenever you add, remove or change documents in <code>corpus/</code>, run <code>ingest</code> again. <strong>The index doesn't update itself</strong> — an un-ingested document is invisible, and the answer reads as a coverage gap rather than an operational mistake.</p>
       </div>
     </section>
 
     <!-- 12 -->
     <section class="doc" id="s12">
-      <div class="sec-head"><span class="num serif">§&nbsp;12</span><h2 class="serif">Every configuration knob, explained</h2></div>
-      <p>All live in <code>ragmed/config.py</code> with sensible defaults. To change one without editing code, copy <code>.env.example</code> to <code>.env</code> and set it there.</p>
+      <div class="sec-head"><span class="num serif">§&nbsp;12</span><h2 class="serif">Every configuration knob</h2></div>
+      <p>All in <code>ragmed/config.py</code>. To change one without editing code, copy <code>.env.example</code> to <code>.env</code>.</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Setting</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
-            <tr><td><code>EMBED_MODEL</code></td><td>Which embedding model. <em>Changing needs a full <code>ingest --reset</code>.</em></td><td>bge-base-en-v1.5</td></tr>
-            <tr><td><code>LLM_BASE_URL</code></td><td>Where vLLM's OpenAI-compatible API is listening.</td><td>localhost:8000/v1</td></tr>
-            <tr><td><code>LLM_MODEL</code></td><td>Which model vLLM is serving — must match its <code>--model</code> flag.</td><td>Qwen3.6-27B-AWQ</td></tr>
-            <tr><td><code>LLM_TEMPERATURE</code> / <code>TOP_P</code> / <code>TOP_K</code></td><td>Sampling. <strong>Don't set temperature to 0</strong> — Qwen3-family models loop on repeated tokens under greedy decoding.</td><td>0.7 / 0.95 / 20</td></tr>
-            <tr><td><code>LLM_MAX_TOKENS</code></td><td>Caps <em>total</em> generation per answer.</td><td>1024</td></tr>
-            <tr><td><code>LLM_TIMEOUT</code></td><td>Client HTTP timeout (seconds). At ~19 tok/s a long answer takes ~50s, and a typical client default would surface as a false retrieval failure.</td><td>180</td></tr>
-            <tr><td><code>LLM_SEED</code></td><td>Fixed sampling seed for the two calls that feed <em>retrieval</em> — the HyDE draft and the follow-up rewrite — not for the answer. Leaving them sampled makes the retrieved passages themselves random. Negative disables.</td><td>1729</td></tr>
-            <tr><td><code>HF_OFFLINE</code></td><td>Stop sentence-transformers revalidating the already-cached embedder and reranker against huggingface.co on every process start (~10s each time). Set <code>false</code> only to download a model you haven't cached.</td><td>true</td></tr>
-            <tr><td><code>LLM_ENABLE_THINKING</code></td><td>Let Qwen3.6 reason before answering. Left on, it can burn the token budget on chain-of-thought and return no content.</td><td>false</td></tr>
-            <tr><td><code>CHUNK_SIZE</code></td><td>Target characters per chunk. <em>Re-ingest after changing.</em></td><td>1100</td></tr>
-            <tr><td><code>CHUNK_OVERLAP</code></td><td>Characters shared between neighbors.</td><td>150</td></tr>
-            <tr><td><code>TOP_K</code></td><td>How many chunks are fed to the LLM. More = more context, slower.</td><td>6</td></tr>
-            <tr><td><code>CANDIDATE_K</code></td><td>Candidates each search fetches before fusion.</td><td>25</td></tr>
-            <tr><td><code>DENSE_WEIGHT</code> / <code>LEXICAL_WEIGHT</code></td><td>Balance of semantic vs. keyword search. Raise lexical for exact citations.</td><td>0.6 / 0.4</td></tr>
-            <tr><td><code>MAX_CHUNKS_PER_SOURCE</code></td><td>Most chunks one document may take in the top-K, so a landmark case can't fill the context with itself. <code>0</code> disables. Overflow is demoted, not dropped.</td><td>3</td></tr>
+            <tr><td><code>EMBED_MODEL</code></td><td>Which embedding model. <em>Needs <code>ingest --reset</code>.</em></td><td>bge-base-en-v1.5</td></tr>
+            <tr><td><code>LLM_BASE_URL</code> / <code>LLM_MODEL</code></td><td>Where vLLM listens, and which model it serves — must match its <code>--model</code> flag.</td><td>localhost:8000/v1</td></tr>
+            <tr><td><code>LLM_TEMPERATURE</code> / <code>TOP_P</code> / <code>TOP_K</code></td><td>Sampling. <strong>Never set temperature to 0</strong> — Qwen3-family models loop on repeated tokens under greedy decoding.</td><td>0.7 / 0.95 / 20</td></tr>
+            <tr><td><code>LLM_MAX_TOKENS</code></td><td>Caps total generation per answer.</td><td>1024</td></tr>
+            <tr><td><code>LLM_TIMEOUT</code></td><td>Client HTTP timeout. A long answer takes ~50s; a typical client default would surface as a false retrieval failure.</td><td>180</td></tr>
+            <tr><td><code>LLM_SEED</code></td><td>Fixed seed for the two calls that feed <em>retrieval</em> — the HyDE draft and the follow-up rewrite — not for the answer. Leaving them sampled makes the retrieved passages themselves random.</td><td>1729</td></tr>
+            <tr><td><code>LLM_ENABLE_THINKING</code></td><td>Leave off. On, the model can burn its budget on chain-of-thought and return no content.</td><td>false</td></tr>
+            <tr><td><code>HF_OFFLINE</code></td><td>Stop sentence-transformers revalidating already-cached models against huggingface.co on every start (~10s each). Set <code>false</code> only to download something new.</td><td>true</td></tr>
+            <tr><td><code>CHUNK_SIZE</code> / <code>CHUNK_OVERLAP</code></td><td>Target characters per chunk, and the overlap between neighbours. <em>Re-ingest after changing.</em></td><td>1100 / 150</td></tr>
+            <tr><td><code>TOP_K</code> / <code>CANDIDATE_K</code></td><td>Chunks fed to the LLM, and candidates each search fetches before fusion.</td><td>6 / 25</td></tr>
+            <tr><td><code>DENSE_WEIGHT</code> / <code>LEXICAL_WEIGHT</code></td><td>Semantic vs. keyword balance. Raise lexical for exact citations.</td><td>0.6 / 0.4</td></tr>
+            <tr><td><code>MAX_CHUNKS_PER_SOURCE</code> / <code>_FAMILY</code></td><td>Most chunks one document, and one <em>kind</em> of authority, may take (§8). Overflow is demoted, not dropped. Don't raise the family cap chasing "more families" — that number is a proxy, and forcing breadth makes a question one family genuinely answers worse.</td><td>3 / 3</td></tr>
+            <tr><td><code>RERANK_PROTECT_TOP</code></td><td>Fused results guaranteed a final slot regardless of the reranker (§8). The knee of a measured curve — going higher <em>breaks</em>: a 6-slot context handed back to the bi-encoder is the failure the reranker exists to fix.</td><td>4</td></tr>
             <tr><td><code>CLAUSE_CANDIDATE_K</code> / <code>MIN_CHUNKS_PER_CLAUSE</code></td><td>Per-ask search size, and the slots each ask of a compound question is guaranteed. A floor, not a quota.</td><td>10 / 2</td></tr>
-            <tr><td><code>RERANK_ENABLED</code> / <code>RERANK_MODEL</code></td><td>The cross-encoder that rescores retrieved candidates. Set false to trade ranking quality for ~2.5s per query; <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> is ~10× smaller.</td><td>true / bge-reranker-base</td></tr>
-            <tr><td><code>RERANK_CANDIDATES</code></td><td>How many retrieved chunks get rescored; the tail keeps its fused order behind them.</td><td>30</td></tr>
-            <tr><td><code>RERANK_MIN_SPREAD</code></td><td>Ignore the reranking when its scores are too flat to mean anything — a compound question once produced a 0.0004 spread, and sorting it promoted an unrelated case to rank 1.</td><td>0.02</td></tr>
-            <tr><td><code>HYDE_MODE</code></td><td>When to draft a hypothetical answer to bridge vocabulary: <code>off</code> / <code>auto</code> / <code>always</code>.</td><td>auto</td></tr>
-            <tr><td><code>HYDE_MIN_SIM</code></td><td>Fire HyDE when the whole question matches this poorly.</td><td>0.68</td></tr>
-            <tr><td><code>HYDE_CLAUSE_MIN_SIM</code></td><td>Fire HyDE when the worst-covered <em>ask</em> of a compound question falls below this — the trigger the whole-question check can't see.</td><td>0.70</td></tr>
-            <tr><td><code>OCR_ENABLED</code></td><td>Turn OCR on/off.</td><td>true</td></tr>
-            <tr><td><code>OCR_LANGUAGE</code> / <code>OCR_DPI</code></td><td>Tesseract language; render resolution (higher = better, slower).</td><td>eng / 300</td></tr>
-            <tr><td><code>OCR_MIN_CHARS</code></td><td>Below this many characters, treat a PDF as scanned and try OCR.</td><td>200</td></tr>
-            <tr><td><code>TESSERACT_CMD</code></td><td>Explicit path to <code>tesseract.exe</code> if auto-detection fails.</td><td>auto</td></tr>
+            <tr><td><code>RERANK_ENABLED</code> / <code>RERANK_MODEL</code> / <code>_CANDIDATES</code></td><td>The cross-encoder, and how many chunks it rescores (the tail keeps its fused order behind them). Disabling trades ranking quality for ~2.5s per query; MiniLM is ~10× smaller.</td><td>true / bge-reranker-base / 30</td></tr>
+            <tr><td><code>RERANK_MIN_SPREAD</code></td><td>Ignore the reranking when its scores are too flat to mean anything.</td><td>0.02</td></tr>
+            <tr><td><code>HYDE_MODE</code> / <code>_MIN_SIM</code> / <code>_CLAUSE_MIN_SIM</code></td><td><code>off</code>/<code>auto</code>/<code>always</code>, and the two similarity floors that fire it — whole question, and worst-covered <em>ask</em> (§8).</td><td>auto / 0.68 / 0.70</td></tr>
+            <tr><td><code>OCR_ENABLED</code> / <code>OCR_DPI</code> / <code>OCR_MIN_CHARS</code></td><td>OCR on/off, render resolution, and the character count below which a PDF is treated as scanned.</td><td>true / 300 / 200</td></tr>
           </tbody>
         </table>
       </div>
       <div class="note">
         <span class="tag">Rule of thumb</span>
-        <p>Settings that change the <strong>index itself</strong> (<code>EMBED_MODEL</code>, <code>CHUNK_SIZE</code>) need a <code>ingest --reset</code>. Retrieval-only settings (<code>TOP_K</code>, weights) take effect immediately — no re-ingest.</p>
+        <p>Settings that change the <strong>index itself</strong> (<code>EMBED_MODEL</code>, <code>CHUNK_SIZE</code>, <code>CHUNK_OVERLAP</code>) need <code>ingest --reset</code>. Retrieval-only settings take effect immediately.</p>
       </div>
-      <div class="note">
-        <span class="tag">If you touch a similarity threshold, measure it</span>
-        <p>The two <code>HYDE_*_SIM</code> numbers look like taste. They aren't. Write ~5 questions the corpus answers and ~5 it can't, print their <em>raw</em> similarities (fused scores are normalized per-query and can't be compared across questions), and put the threshold in the gap between the two ranges.</p>
-        <p>If the ranges <em>overlap</em>, your signal is wrong and no number will save it. That's exactly what happened tuning <code>HYDE_CLAUSE_MIN_SIM</code>: scoring every clause of a question gave answerable 0.617–0.717 vs. unanswerable 0.520–0.632 — total overlap, because the weakest clause of an answerable question is its narrative setup, not its question. Scoring only the <em>asks</em> gave 0.721–0.783 vs. 0.605–0.678, and 0.70 fell out on its own.</p>
+      <div class="note warn">
+        <span class="tag">If you touch a threshold, measure it — don't guess</span>
+        <p>The similarity numbers look like taste. They aren't. Write ~5 questions the corpus answers and ~5 it can't, print their <em>raw</em> similarities (fused scores are normalized per-query and can't be compared across questions), and put the threshold in the gap.</p>
+        <p>If the ranges <em>overlap</em>, your signal is wrong and no number will save it. Exactly what happened tuning <code>HYDE_CLAUSE_MIN_SIM</code>: scoring every clause gave answerable 0.617–0.717 against unanswerable 0.520–0.632 — total overlap, because the weakest clause of an answerable question is its narrative setup, not its question. Scoring only the <em>asks</em> gave 0.721–0.783 against 0.605–0.678, and 0.70 fell out on its own.</p>
       </div>
     </section>
 
     <!-- 12b -->
     <section class="doc" id="s12b">
       <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">What it costs, and what actually helps</h2></div>
-      <p>Worth knowing before judging the system: this is <strong>single-user speed — fine for research, not a chat toy.</strong> A complete answer lands in roughly 20–30 seconds. It used to take about 50, and the gap between those two numbers is instructive, because almost none of it was the model being slow. Measured on an RTX&nbsp;3090&nbsp;24GB running <code>QuantTrio/Qwen3.6-27B-AWQ</code> under vLLM (full baseline in <code>HAVEN_VLLM_MIGRATION.md</code> §2):</p>
+      <p>This is <strong>single-user speed — fine for research, not a chat toy.</strong> A complete answer lands in roughly 20–30 seconds. It used to take about 50, and the gap is instructive, because almost none of it was the model being slow. Measured on an RTX&nbsp;3090&nbsp;24GB:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Metric</th><th>Value</th></tr></thead>
@@ -814,146 +859,99 @@ docker update --restart unless-stopped vllm</code></pre>
             <tr><td>Weights resident</td><td>19.05&nbsp;GiB</td></tr>
             <tr><td>KV cache available</td><td>2.39&nbsp;GiB (14,563 tokens)</td></tr>
             <tr><td>Max context per request</td><td>8,192</td></tr>
-            <tr><td>Max concurrency @ 8K context</td><td>~1.78×</td></tr>
             <tr><td>Generation throughput</td><td>~19 tok/s</td></tr>
+            <tr><td>Time to first token (warm prefix)</td><td>~0.6s</td></tr>
             <tr><td>Engine init (container startup)</td><td>~60s, one-time</td></tr>
           </tbody>
         </table>
       </div>
-      <p>These have now been measured end-to-end rather than estimated, which is what this guide's own rule demands. Time-to-first-token is ~0.8s; a long answer takes ~50s, which is why <code>LLM_TIMEOUT</code> defaults to <code>180</code> rather than a typical client's default.</p>
-      <p>Where the 50 seconds actually went is the interesting part, because three of the four biggest costs had nothing to do with inference:</p>
+      <p>Three of the four biggest costs had nothing to do with inference:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>What was fixed</th><th>Saved</th><th>Why it was there</th></tr></thead>
           <tbody>
-            <tr><td>Prefix caching</td><td>TTFT 1941 → 835 ms</td><td>The ~480-token system prompt is identical on every request and was being re-prefilled every time. It had been silently switched off.</td></tr>
-            <tr><td>HyDE draft length</td><td>10.5s → 4.8s</td><td>The draft was writing to its 200-token cap and being truncated mid-sentence — the cap, not the prompt, was setting the length. Asking for 2–3 sentences cut it to ~95 tokens. What HyDE contributes is vocabulary, and that is front-loaded.</td></tr>
+            <tr><td>Prefix caching</td><td>TTFT 1941 → 620 ms</td><td>The ~480-token system prompt is identical on every request and was being re-prefilled every time. It had been silently switched off.</td></tr>
+            <tr><td>HyDE draft length</td><td>10.5s → 4.8s</td><td>The draft was writing to its 200-token cap and being truncated mid-sentence — the cap, not the prompt, was setting the length. What HyDE contributes is vocabulary, and that is front-loaded.</td></tr>
             <tr><td>Hugging Face offline mode</td><td>~10s per process</td><td>sentence-transformers revalidated both already-cached local models against huggingface.co on every start — on a system whose entire premise is running offline.</td></tr>
-            <tr><td>Warm-up and per-process caching</td><td>~6s off the first question</td><td>Model loading was billed to whoever asked first. Retrieval also rebuilt the Chroma client and re-read the 17MB BM25 index on <em>every single query</em>.</td></tr>
+            <tr><td>Warm-up and per-process caching</td><td>~6s off the first question</td><td>Model loading was billed to whoever asked first. Retrieval also rebuilt the Chroma client and re-read the 17MB BM25 index on <em>every query</em>.</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The general lesson is worth more than the specific fixes: the first profile showed ~19s of "retrieval" on a question that retrieves in about one second. That number was real, but it was measuring model loading, a network round-trip to a service the system is supposed to run without, and an index being rebuilt from disk — not retrieval. <strong>Profile before optimising, and be suspicious when a stage is slow in a way its own logic can't explain.</strong></p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>Change</th><th>Effect</th><th>Costs you</th></tr></thead>
-          <tbody>
-            <tr><td>More VRAM (32GB+)</td><td>room for a MoE-class model, longer context, more concurrency</td><td>hardware</td></tr>
-            <tr><td>Lower <code>TOP_K</code></td><td>less prompt to prefill</td><td>less context per answer</td></tr>
-            <tr><td>Lower <code>LLM_MAX_TOKENS</code></td><td>linear</td><td>shorter answers</td></tr>
-            <tr><td>Shorter answers (system prompt, or <code>LLM_MAX_TOKENS</code>)</td><td>linear — answers run 600–900 tokens, and generation now dominates</td><td>detail in the answer</td></tr>
-            <tr><td><code>RERANK_ENABLED=false</code></td><td>~2.5s</td><td>ranking quality</td></tr>
-            <tr><td>Remove <code>--enforce-eager</code></td><td>~15–20% more throughput</td><td>more VRAM than this card has — see below</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <p>The general lesson beats the specific fixes: the first profile showed ~19s of "retrieval" on a question that retrieves in about one second. The number was real, but it was measuring model loading, a network round-trip to a service the system is supposed to run without, and an index being rebuilt from disk. <strong>Profile before optimising, and be suspicious when a stage is slow in a way its own logic can't explain.</strong></p>
       <div class="note warn">
         <span class="tag">The optimisation that had to be given back</span>
-        <p>N-gram speculative decoding made generation <strong>1.7× faster</strong> — 19 to 33 tok/s — and it was removed anyway, because it corrupted the answers. It works by drafting tokens copied from the prompt and verifying them in a batch, which suits RAG perfectly, since the answer quotes statutory text sitting right there in the context. But fragments were being emitted <em>twice</em>: <code>"…course of treatment" the treatment</code>, <code>**Whatever grave risks of injury** of injury</code>, and — worst — a case number that came out as <code>G.R. No. 210445,0445</code>.</p>
-        <p>Measured over 15 answers per configuration on identical questions: <strong>7 repeated fragments affecting 4 of 15 answers with it on; 0 affecting 0 of 15 with it off.</strong> A corrupted citation is not a cosmetic defect in a tool whose entire value is that you can go and check what it cited. <strong>A speed-up that damages the output is not a speed-up.</strong> The general form: when you buy performance, measure the thing you were protecting, not just the clock — the failure here was invisible to every latency benchmark and obvious in the first answer a human actually read.</p>
+        <p>N-gram speculative decoding made generation <strong>1.7× faster</strong> — 19 to 33 tok/s — and was removed anyway, because it corrupted the answers. It drafts tokens copied from the prompt, which suits RAG perfectly since the answer quotes text sitting right there. But fragments came out <em>twice</em>: <code>"…course of treatment" the treatment</code>, and — worst — a case number as <code>G.R. No. 210445,0445</code>. Over 15 answers per configuration on identical questions: <strong>7 repeated fragments across 4 of 15 answers with it on; none with it off.</strong> <strong>A speed-up that damages the output is not a speed-up</strong> — and this one was invisible to every latency benchmark, obvious in the first answer a human read.</p>
+        <p>A related trap: don't benchmark decode by counting streamed chunks. With speculative decoding several accepted tokens arrive in one chunk, so chunk-counting reported ~16 tok/s and made a real 1.7× look like a regression.</p>
       </div>
       <div class="note">
         <span class="tag">Why <code>--enforce-eager</code> stays</span>
-        <p>CUDA graphs would buy another ~15–20%, and they are not turned on — not from caution, but because they don't fit. With 19.05&nbsp;GiB of weights resident on a 24&nbsp;GiB card, enabling graphs left 0.94&nbsp;GiB of KV cache against the 1.33&nbsp;GiB an 8k context needs, and the engine refused to start; tried at <code>--gpu-memory-utilization</code> 0.93, 0.95 and 0.96. They do fit at <code>--max-model-len 4096</code>, but real prompts run ~1.9k tokens plus 1024 of output plus conversation history, which is too close to the edge to risk mid-conversation.</p>
+        <p>CUDA graphs would buy another ~15% and don't fit. With 19.05&nbsp;GiB resident on a 24&nbsp;GiB card they left 0.94&nbsp;GiB of KV cache against the 1.33&nbsp;GiB an 8k context needs, and the engine refused to start — tried at 0.93, 0.95 and 0.96 utilization. They fit at <code>--max-model-len 4096</code>, but real prompts run ~1.9k tokens plus output plus history, too close to the edge.</p>
       </div>
       <div class="note warn">
         <span class="tag">The bug that speed work uncovered</span>
-        <p>Trying to A/B the HyDE draft length produced a result that made no sense: the retrieved chunks kept changing. They were changing because the question was being asked more than once — <strong>the same question, unchanged, returned only 2–3 of the same 10 sources across three runs.</strong> The HyDE draft and the follow-up rewrite are LLM calls, they were sampled like any other, and they decide <em>what gets searched for</em>. So the sampling noise was landing directly on the evidence. Temperature 0 isn't available here (Qwen3 loops on greedy decode), so the fix is a fixed seed on those two calls only — <code>LLM_SEED</code> — leaving the answer itself sampled. Same question, same passages, every time. Worth noticing that this was never a performance bug; it was found only because measuring a performance change requires a stable baseline, and there wasn't one.</p>
-      </div>
-      <div class="note warn">
-        <span class="tag">Don't benchmark against yourself</span>
-        <p>The failure that actually bit this project, not a hypothetical one: <code>embeddings.py</code> and <code>rerank.py</code> both load small models meant to stay on CPU regardless of what GPU is available — but one code path in each omitted the explicit <code>device="cpu"</code> pin, so they auto-detected CUDA instead. Invisible on a machine with GPU headroom to spare. Not invisible once vLLM is running: <code>--gpu-memory-utilization 0.93</code> leaves under a gigabyte free, so the next thing that silently reaches for the GPU — the embedder on its offline-fallback path, the reranker on every load — hits a hard <code>torch.OutOfMemoryError</code> mid-query. The fix was two lines, but the lesson generalises: once one process on a box is deliberately saturating a resource, anything else that silently defaults to the same resource fails in a way that looks unrelated. Check what's already holding the GPU (or CPU, or RAM) before chasing a crash as if it were a logic bug.</p>
+        <p>A/B-ing the HyDE draft length gave a result that made no sense: the retrieved chunks kept changing. <strong>The same question, unchanged, returned only 2–3 of the same 10 sources across three runs.</strong> The HyDE draft and the follow-up rewrite are LLM calls, sampled like any other, and they decide <em>what gets searched for</em> — so sampling noise was landing directly on the evidence. The fix is a fixed seed on those two calls only, leaving the answer sampled. Never a performance bug; found only because measuring a performance change requires a stable baseline, and there wasn't one.</p>
       </div>
     </section>
 
     <!-- 13 -->
     <section class="doc" id="s13">
       <div class="sec-head"><span class="num serif">§&nbsp;13</span><h2 class="serif">The corpus: what's inside &amp; how to grow it</h2></div>
-      <p>The index described here holds <strong>7,934 chunks from 154 documents</strong>, across five sources:</p>
-      <ul>
-        <li><strong>Statutes</strong> (LawPhil): the Medical Act of 1959, the UHC Act, Anti-Hospital Deposit/Detention laws, Data Privacy Act, Civil Code, Revised Penal Code, and more.</li>
-        <li><strong>PRC issuances</strong>: Board of Medicine Board Law, Code of Ethics, resolutions, and the disciplinary/administrative-investigation rules (these last came in via OCR).</li>
-        <li><strong>DOH issuances</strong> (Supreme Court E-Library): hospital-licensing orders, implementing rules for the patients'-rights laws, and the Magna Carta of Public Health Workers.</li>
-        <li><strong>Jurisprudence</strong> (Supreme Court E-Library): medical malpractice, informed consent, hospital liability, records &amp; certificates, surgical cases.</li>
-        <li><strong>Bills, payment &amp; non-payment</strong>: PhilHealth's charter and No-Balance-Billing circulars, HMO payment cases, senior-citizen and PWD discount laws with their IRRs, government medical assistance, small-claims procedure — and the deceased-patient chain: claims against the estate, who inherits the debt, and release of the remains.</li>
-      </ul>
-      <h3>Three ways to add more</h3>
-      <ol>
-        <li><strong>Drop your own files</strong> into <code>corpus/</code>, then <code>ingest</code>. Text-based PDFs work best; scanned ones are OCR'd automatically.</li>
-        <li><strong>Add URLs to a seed file</strong> (<code>fetch/seeds*.txt</code>, format <code>name | url</code>) and run the fetcher. Good sources: LawPhil, the Supreme Court E-Library.</li>
-        <li><strong>Mix both.</strong></li>
-      </ol>
-
+      <p><strong>8,600 chunks from 154 documents</strong>, across five families: <strong>statutes</strong> (Medical Act, UHC Act, anti-hospital-deposit and detention laws, Civil Code, Revised Penal Code); <strong>PRC issuances</strong> (Board Law, Code of Ethics, disciplinary rules — these via OCR); <strong>DOH issuances</strong> (hospital licensing, patients'-rights IRRs, Magna Carta of Public Health Workers); <strong>jurisprudence</strong> (malpractice, informed consent, hospital liability); and <strong>bills &amp; payment</strong> (PhilHealth charter and No-Balance-Billing circulars, HMO cases, senior-citizen and PWD discounts, small claims, and the deceased-patient chain).</p>
+      <p>To add more: drop files into <code>corpus/</code> and <code>ingest</code>, or add URLs to a seed file (<code>name | url</code>) and run the fetcher.</p>
       <h3>Check the <em>shape</em> of what you fetched, not just that it downloaded</h3>
-      <p>A file can arrive complete, correct and on-topic and still be the wrong <em>shape</em> to index. Two patterns recur, and catching either after indexing costs a full <code>ingest --reset</code> rebuild.</p>
+      <p>A file can arrive complete, correct and on-topic and still be the wrong <em>shape</em>. Catching either pattern after indexing costs a full rebuild.</p>
       <ul>
-        <li><strong>One page holding many numbered documents.</strong> LawPhil publishes Rules of Court 72–109 as a single 148,000-character page. Indexed whole it produced <strong>199 chunks sharing just 25 section labels</strong> — every rule restarts its numbering, so <code>Section 2.</code> meant 27 different things — with no citable identity at all. The passage answering a real question lost to its own 198 siblings: retrieval found the right <em>file</em> and the wrong <em>section</em>, and the answer denied a rule the file plainly contains. <code>fetch/split_rules_of_court.py</code> splits it per rule; Rule 86 went from competing among 199 chunks to 13, every one citable.</li>
+        <li><strong>One page holding many numbered documents.</strong> LawPhil publishes Rules of Court 72–109 as a single 148,000-character page. Indexed whole it produced <strong>199 chunks sharing just 25 section labels</strong> — every rule restarts its numbering, so <code>Section 2.</code> meant 27 different things — with no citable identity. The passage answering a real question lost to its own 198 siblings: retrieval found the right <em>file</em> and the wrong <em>section</em>, and the answer denied a rule the file plainly contains. <code>split_rules_of_court.py</code> splits it per rule; Rule 86 went from competing among 199 chunks to 13, every one citable.</li>
         <li><strong>PDFs padded with restated text.</strong> Official PDFs often append comparative tables or consolidated redlines. The 2022 small-claims rules PDF was 484,000 characters — <strong>52% of it the same rule text printed three times</strong> side by side. The duplicate filter can't help: three-column layout makes the copies textually different. Trim before indexing.</li>
       </ul>
-      <p>Whenever you trim or split, say so in the seed file — what you removed and why. And remember re-fetching restores the original, so a split must be a re-runnable script, not a one-off edit.</p>
-
+      <p>Whenever you trim or split, record what you removed and why in the seed file. Re-fetching restores the original, so a split must be a re-runnable script, not a one-off edit.</p>
       <div class="note">
         <span class="tag">Garbage in, garbage out — with one caveat</span>
-        <p>A thin corpus gives thin answers, and adding relevant, high-quality documents beats tweaking model settings. But the caveat cuts the other way: <strong>don't add documents to fix a ranking problem.</strong> If an answer is wrong, first find out whether the source is missing, present but out-ranked, or present and retrieved as the wrong chunk — those need opposite fixes, and only the first is solved by adding sources.</p>
+        <p>Adding relevant, high-quality documents beats tweaking model settings. But the caveat cuts the other way: <strong>don't add documents to fix a ranking problem.</strong> If an answer is wrong, first find out whether the source is missing, present but out-ranked, or present and retrieved as the wrong chunk — those need opposite fixes, and only the first is solved by adding sources.</p>
       </div>
     </section>
 
     <!-- 14 -->
     <section class="doc" id="s14">
       <div class="sec-head"><span class="num serif">§&nbsp;14</span><h2 class="serif">Troubleshooting &amp; FAQ</h2></div>
-      <h3>"The LLM server isn't reachable" when I run <code>ask</code></h3>
-      <p>The vLLM container isn't running, hasn't finished loading (<code>docker logs vllm</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started. Check <code>docker ps</code>, then <code>curl http://localhost:8000/v1/models</code> directly. Then <code>cli.py status</code> should show <code>LLM server: OK</code>.</p>
-      <h3><code>torch.OutOfMemoryError: CUDA out of memory</code>, pointing at <code>embeddings.py</code> or <code>rerank.py</code></h3>
-      <p>vLLM reserves most of the GPU on purpose, so there's normally under a gigabyte free. Embeddings and the reranker are meant to stay on CPU regardless — see the callout in §10 if this is happening. If you just fixed exactly this and it's <em>still</em> happening: restart whatever process is running the query (<code>streamlit run app.py</code>, <code>cli.py chat</code>). Python doesn't reload code already imported into a running process — and a traceback printed after your edit will still show your fixed source line, because Python reads tracebacks fresh off disk at print time, not from what was actually executed. A traceback that seems to contradict the code in front of you is a sign to check whether the process predates the fix.</p>
-      <h3>I added or changed something in <code>ragmed/</code> and nothing happened — no error, just silence</h3>
-      <p>Same cause as the entry above, minus the crash — which makes it easier to miss. This is exactly what happened building the ops dashboard's query-metrics logging: a Haven session had been open since <em>before</em> the logging call was added to <code>rag.py</code>, so every question it answered kept running the old <code>rag.py</code> with no logging in it — correctly, silently, and with nothing pointing at the real cause. A long-running process only has the version of <code>ragmed/*.py</code> that was on disk when it <em>started</em>. Check <code>ps -o pid,lstart,cmd -p &lt;pid&gt;</code> against <code>stat -c '%y' ragmed/whatever.py</code> for the file(s) you changed; if the process started first, restart it — before debugging the feature itself.</p>
-      <h3>The answer says "The provided corpus does not cover this."</h3>
-      <p>That's the system being <em>honest</em>, not broken. The retrieved chunks didn't contain the answer. Fix by adding the relevant document and re-ingesting. This is a feature — it's refusing to make things up.</p>
-      <h3>The answer is confident but wrong — or it answered only half my question</h3>
-      <p>This is the failure mode to take most seriously, because nothing looks broken. Don't start adding documents; first find out <em>which</em> of three things went wrong, because they need opposite fixes:</p>
-      <ol>
-        <li><strong>The source is missing</strong> → corpus problem. Add it, re-ingest.</li>
-        <li><strong>The source is there but out-ranked</strong> → retrieval problem. Adding more documents makes this <em>worse</em>.</li>
-        <li><strong>The source was retrieved, but the wrong chunk of it</strong> → chunking / document-shape problem (see §13).</li>
-      </ol>
-      <p>Two cheap probes tell them apart — re-ask just the failing part in the corpus's own vocabulary, and look at raw retrieval with the LLM bypassed:</p>
-      <pre><code>.\.venv\Scripts\python.exe cli.py ask "What is the deadline for filing a
-   money claim against the estate of a deceased person?"
+      <h3>The answer is confident but wrong — or answered only half my question</h3>
+      <p>The failure to take most seriously, because nothing looks broken. Don't start adding documents; find out <em>which</em> of three things went wrong, since they need opposite fixes: the <strong>source is missing</strong> (add it, re-ingest); the <strong>source is there but out-ranked</strong> (a retrieval problem — adding documents makes it <em>worse</em>); or the <strong>wrong chunk of the right source</strong> was retrieved (document shape, §13).</p>
+      <p>Two cheap probes tell them apart — re-ask the failing part in the corpus's own vocabulary, and look at raw retrieval with the LLM bypassed:</p>
+      <pre><code>python cli.py ask "What is the deadline for filing a money claim
+   against the estate of a deceased person?"
 
-.\.venv\Scripts\python.exe -c "from ragmed import retriever; [print(
+python -c "from ragmed import retriever; [print(
    f'{r.score:.3f} {r.metadata.get(\"source\")}') for r in
    retriever.retrieve('your question', top_k=25)]"</code></pre>
-      <p>A real example from this corpus: a compound question about a deceased patient's unpaid bill produced a fluent answer denying any filing deadline existed. The narrow re-ask ranked the correct document <strong>#2</strong>. Raw retrieval showed the compound question had it <strong>nowhere in the top 25</strong>. That one comparison proved the corpus was fine and pointed the fix at retrieval — saving a pointless hunt for documents already sitting in the index.</p>
-      <p>Also glance at the <strong>source list under every answer</strong>: if 8 of 10 citations name the same document, the context was crowded even if this answer happened to come out right.</p>
-
+      <p>A real example: a compound question about a deceased patient's unpaid bill produced a fluent answer denying any filing deadline existed. The narrow re-ask ranked the correct document <strong>#2</strong>; raw retrieval showed the compound question had it <strong>nowhere in the top 25</strong>. That one comparison proved the corpus was fine and pointed the fix at retrieval. Also glance at the source list under every answer: if 8 of 10 citations name the same document, the context was crowded even if this answer came out right.</p>
+      <h3>I changed something in <code>ragmed/</code> and nothing happened — no error, just silence</h3>
+      <p>Python doesn't reload modules a process already imported, and <code>streamlit run</code> and <code>cli.py chat</code> import once at startup. Two signatures: a <strong>crash whose traceback contradicts the fix</strong> — Python reads traceback source lines fresh off disk at <em>print</em> time, so a stale process can raise through code that reads as already fixed — and, more dangerous, <strong>silent nothing</strong>, where a new code path never runs at all. Check <code>ps -o pid,lstart,cmd -p &lt;pid&gt;</code> against <code>stat -c '%y' ragmed/whatever.py</code> before debugging the feature itself.</p>
+      <h3><code>torch.OutOfMemoryError</code> pointing at <code>embeddings.py</code> or <code>rerank.py</code></h3>
+      <p>vLLM reserves most of the GPU on purpose. Embeddings and the reranker are meant to stay on CPU regardless — see §10. If you just fixed exactly this and it's <em>still</em> happening, restart the process running the query.</p>
+      <h3>"The LLM server isn't reachable"</h3>
+      <p>The container isn't running, hasn't finished loading (<code>docker logs vllm</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started.</p>
+      <h3>"The provided corpus does not cover this"</h3>
+      <p>The system being <em>honest</em>, not broken. Add the relevant document and re-ingest.</p>
       <h3>A document I added isn't showing up</h3>
-      <p>Three usual causes: (1) you forgot to <code>ingest</code>; (2) it's a scanned PDF and OCR is off or Tesseract isn't found (check <code>cli.py status</code>); (3) unsupported file type. Run <code>ingest</code> and read its summary — it lists skipped files and why.</p>
-      <h3>How do I know the answer is correct?</h3>
-      <p>Every answer lists its <strong>sources</strong> (law, section, file). Open the cited section in the actual document and verify. RAG makes this easy by design — but it's still on you to look.</p>
-      <h3>Is any of my data sent to the cloud?</h3>
-      <p>No. Embeddings, the vector store, and the LLM all run locally. The internet is touched only for: the first download of the embedding model, when <em>you</em> run a fetcher, and when the vLLM container pulls model weights on first start. Everyday questions are 100% offline.</p>
-      <h3>Is this legal advice?</h3>
-      <p>No. It is a <em>legal-information retrieval tool</em> over a corpus someone curated. It does not interpret the law, does not account for facts specific to a case, and does not replace a licensed Philippine attorney. The system prompt requires it to say so, and every answer ships with its sources precisely so a human can check them. <strong>Verify against the cited text before relying on anything.</strong></p>
+      <p>You forgot to <code>ingest</code>; it's a scanned PDF and OCR is off or Tesseract isn't found (<code>cli.py status</code>); or it's an unsupported type. <code>ingest</code> lists skipped files and why.</p>
       <h3>How accurate is it, honestly?</h3>
-      <p>Accuracy depends far more on the corpus than on the model. When a question is squarely covered by an indexed document, answers are generally well-grounded and correctly cited. When it is not, the system is prompted to refuse — but the failure mode to watch for is the one above: a <em>fluent, wrong</em> answer that reads exactly like a correct one. This guide records several real examples, including one where the system confidently denied a filing deadline that the Rules of Court impose. Read the citations, not just the prose.</p>
+      <p>Accuracy depends far more on the corpus than the model. When a question is squarely covered by an indexed document, answers are generally well-grounded and correctly cited. When it isn't, the system is prompted to refuse — but the failure to watch for is the one above: a <em>fluent, wrong</em> answer that reads exactly like a correct one. <strong>Read the citations, not just the prose.</strong></p>
     </section>
 
     <!-- 15 -->
     <section class="doc" id="s15">
       <div class="sec-head"><span class="num serif">§&nbsp;15</span><h2 class="serif">How to extend it</h2></div>
-      <p>Natural directions once the basics are clear, roughly easiest first:</p>
       <ol>
         <li><strong>Point it at a different corpus.</strong> Nothing here is specific to Philippine law except the seed lists and a few identifier patterns in <code>chunking.py</code>. Swap those and the same engine indexes RFCs, policy manuals, or internal documentation.</li>
-        <li><strong>Grow the corpus</strong> — the jurisprudence, negligence, surgery and billing bundles are already in; add more PRC resolutions and DOH orders you care about. Check the <em>shape</em> of anything new before ingesting (§13).</li>
-        <li><strong>Tune retrieval</strong> — nudge <code>LEXICAL_WEIGHT</code> up for exact-citation questions; try <code>TOP_K = 8</code> for more context. If you touch a similarity threshold, <strong>measure it, don't guess</strong> (§12).</li>
-        <li><strong>Run the tests after changing the engine</strong> — <code>tests/</code> holds 164 checks. Add a case whenever you fix something.</li>
-        <li><strong>The reranker is already in</strong> (§8) — if queries feel slow, that is where the seconds go: <code>RERANK_ENABLED=false</code> or the MiniLM model. Before tuning it, work out whether your problem is <strong>ordering</strong> (right document, wrong chunk — its job) or <strong>reach</strong> (the chunk never retrieved — it cannot help). They look identical in a bad answer and need opposite fixes.</li>
-        <li><strong>Improve citations</strong> — parse section numbers even more precisely, or add clickable links back to source documents in the web UI.</li>
-        <li><strong>Try a different LLM</strong> — swap <code>--model</code> in the vLLM <code>docker run</code> command and match <code>LLM_MODEL</code>. Sizing is the real constraint: 24GB fits a 27B-dense model with the vision encoder disabled; a 35B-class MoE needs 32GB+ (<code>HAVEN_VLLM_MIGRATION.md</code> §6).</li>
+        <li><strong>Grow the corpus</strong> — but check the <em>shape</em> of anything new before ingesting (§13).</li>
+        <li><strong>Tune retrieval</strong> — nudge <code>LEXICAL_WEIGHT</code> up for exact-citation questions. If you touch a threshold, <strong>measure it</strong> (§12).</li>
+        <li><strong>Run the tests after changing the engine</strong> — 308 checks. Add a case whenever you fix something.</li>
+        <li><strong>Before tuning the reranker</strong>, work out whether your problem is <strong>ordering</strong> (right document, wrong chunk — its job) or <strong>reach</strong> (the chunk was never retrieved — it cannot help). They look identical in a bad answer and need opposite fixes.</li>
+        <li><strong>Try a different LLM</strong> — swap <code>--model</code> and match <code>LLM_MODEL</code>. Sizing is the real constraint: 24GB fits a 27B-dense model with the vision encoder disabled; a 35B-class MoE needs 32GB+.</li>
       </ol>
       <div class="recap">
         <div class="tag">Lock it in — the one-paragraph recap</div>
-        <p>Your system <strong>indexes</strong> documents once (read → chunk → embed → store), then <strong>answers</strong> questions on demand (embed the question → hybrid-search for the best chunks → feed them to a local LLM with strict "cite your sources, don't make things up" instructions → return the answer plus its sources). Everything runs on your machine. The librarian finds the pages; the assistant writes the answer from those pages only. <strong>That's RAG.</strong></p>
+        <p>The system <strong>indexes</strong> documents once (read → chunk → embed → store), then <strong>answers</strong> questions on demand (embed the question → hybrid-search for the best chunks → feed them to a local LLM with strict "cite your sources, don't make things up" instructions → return the answer plus its sources). Everything runs on your machine. The librarian finds the pages; the assistant writes the answer from those pages only. <strong>That's RAG.</strong></p>
       </div>
     </section>
   </main>
@@ -962,6 +960,7 @@ docker update --restart unless-stopped vllm</code></pre>
 <footer>
   <p>RAG Field Guide · a walkthrough of a local, citation-first retrieval system for Philippine medical law · built and measured in the open.</p>
 </footer>
+
 
 <script>
 (function () {
@@ -1011,3 +1010,5 @@ docker update --restart unless-stopped vllm</code></pre>
   sections.forEach(function (s) { io.observe(s); });
 })();
 </script>
+
+

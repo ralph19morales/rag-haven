@@ -97,11 +97,11 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # ./.venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
 
-docker run -d --name vllm --gpus all --ipc=host \
+docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
-  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --model Qwen/Qwen3-14B-AWQ \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
@@ -251,7 +251,7 @@ Everything is tunable in `ragmed/config.py` or a `.env` file (copy from
 
 | Setting | Default | What it does |
 |---|---|---|
-| `LLM_MODEL` | `QuantTrio/Qwen3.6-27B-AWQ` | Any model your vLLM server is serving |
+| `LLM_MODEL` | `Qwen/Qwen3-14B-AWQ` | Any model your vLLM server is serving |
 | `TOP_K` | `6` | Passages given to the LLM |
 | `MAX_CHUNKS_PER_SOURCE` | `3` | Stops one landmark document filling the context with itself |
 | `MIN_CHUNKS_PER_CLAUSE` | `2` | Slots reserved per *ask* of a compound question |

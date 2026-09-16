@@ -184,7 +184,7 @@ Don't memorize these — just skim now and refer back. Each is expanded later.
   bi-encoder to find ~30 candidates and a cross-encoder to order them — the
   standard **retrieve-then-rerank** pattern.
 - **LLM (Large Language Model)** — the AI that writes the final answer. Yours is
-  **Qwen3.6-27B-AWQ**, served locally by **vLLM**.
+  **Qwen3-14B-AWQ**, served locally by **vLLM**.
 - **vLLM** — a high-throughput local inference server that serves LLMs over an
   OpenAI-compatible API (the same request shape as `api.openai.com`, just
   pointed at `localhost`). It's the engine a production appliance would ship
@@ -516,7 +516,7 @@ The system assembles the text it will send to the AI. It contains three things:
 > firmly the prompt asks.
 
 ### Step 5 — The LLM writes the answer (`llm.py` → vLLM)
-The prompt goes to **vLLM**, which serves **Qwen3.6-27B-AWQ** locally over an
+The prompt goes to **vLLM**, which serves **Qwen3-14B-AWQ** locally over an
 OpenAI-compatible API. The model reads the passages and streams back an answer,
 token by token, grounded in and citing the supplied sections.
 
@@ -627,18 +627,23 @@ privacy plus zero marginal cost is usually the right call — but if you are
 indexing public documents at high volume, a cloud backend is the reasonable
 choice, and the engine is written to swap.
 
-### Why vLLM + Qwen3.6-27B-AWQ for the LLM?
+### Why vLLM + Qwen3-14B-AWQ for the LLM?
 **vLLM** is what a production/appliance deployment of this kind of system
 actually ships with, so developing against it — rather than a simpler local
 stand-in — rehearses the real serving path: continuous batching,
 PagedAttention, a containerised CUDA runtime that transfers unchanged to
-client hardware. **Qwen3.6-27B-AWQ** is a 4-bit-quantized 27B model; AWQ
-leaves embeddings, `lm_head`, layernorms and the vision encoder in FP16, so
-the real resident footprint on a 24GB card is **19.05 GiB** — noticeably more
-than the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp
-number and doesn't transfer to vLLM's AWQ path. Swap the model with one flag
-(`--model` in the `docker run` command) and matching `LLM_MODEL` in `.env`;
-sizing math for a different model class is in `HAVEN_VLLM_MIGRATION.md` §6.
+client hardware. **Qwen3-14B-AWQ** is a 4-bit-quantized 14B model; AWQ
+leaves embeddings, `lm_head`, layernorms and the vision encoder in FP16. The
+earlier default here was `Qwen3.6-27B-AWQ`, whose real resident footprint on
+a 24GB card was measured at **19.05 GiB** — noticeably more than the
+commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number
+and doesn't transfer to vLLM's AWQ path (full baseline in
+`HAVEN_VLLM_MIGRATION.md` §2). That number is specific to the 27B config and
+has not been re-measured for the 14B model — a smaller model needs less
+VRAM, but re-run `evals/bench_llm.py` rather than assuming a ratio. Swap the
+model with one flag (`--model` in the `docker run` command) and matching
+`LLM_MODEL` in `.env`; sizing math for a different model class is in
+`HAVEN_VLLM_MIGRATION.md` §6.
 
 ### Why bge-base for embeddings?
 `BAAI/bge-base-en-v1.5` is a well-regarded open embedding model with a great
@@ -697,13 +702,14 @@ macOS or Linux that is `./.venv/bin/python`.
 This is worth being precise about, because "runs locally" is easy to misread as
 "never needs the internet".
 
-**Setup needs the internet once**, to bring roughly 21.5 GB onto the machine:
+**Setup needs the internet once**, to bring the following onto the machine (the
+LLM row below dominates the total — see the note after the table):
 
 | What | Size | Where it lands |
 |------|------|----------------|
 | Python packages (PyPI) | ~2 GB | `.venv\` |
 | Embedding model `BAAI/bge-base-en-v1.5` | 439 MB | `%USERPROFILE%\.cache\huggingface\hub` |
-| LLM `QuantTrio/Qwen3.6-27B-AWQ` (pulled by the vLLM container) | ~19 GiB | same Hugging Face cache, mounted into the container |
+| LLM `Qwen/Qwen3-14B-AWQ` (pulled by the vLLM container) | smaller than the ~19 GiB the earlier 27B default needed, but not yet re-measured on this box — check the model card | same Hugging Face cache, mounted into the container |
 | Tesseract OCR (optional, scanned PDFs only) | ~60 MB | `C:\Program Files\Tesseract-OCR` (or `apt install tesseract-ocr` on Linux) |
 | The corpus itself (LawPhil / SC E-Library) | 36 MB | `corpus\` |
 
@@ -733,15 +739,17 @@ separately.
 ```
 
 ```bash
-# 2. vLLM — needs Docker + an NVIDIA GPU. Pulls the model (~19 GiB) on first
-#    run; the flags matter (see HAVEN_VLLM_MIGRATION.md §5 for why each one
-#    is there — most claw back VRAM vLLM would otherwise waste on unused
-#    multimodal support).
-docker run -d --name vllm --gpus all --ipc=host \
+# 2. vLLM — needs Docker + an NVIDIA GPU. Pulls the model on first run; the
+#    flags matter (see HAVEN_VLLM_MIGRATION.md §5 for why each one is there —
+#    most claw back VRAM vLLM would otherwise waste on unused multimodal
+#    support). These were tuned for the earlier Qwen3.6-27B-AWQ default;
+#    re-check gpu-memory-utilization/max-num-seqs against evals/bench_llm.py
+#    if you want them re-tuned for the smaller 14B model.
+docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
-  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --model Qwen/Qwen3-14B-AWQ \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
@@ -751,7 +759,7 @@ docker run -d --name vllm --gpus all --ipc=host \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
 
-docker update --restart unless-stopped vllm   # survives a reboot
+docker update --restart unless-stopped vllm-qwen14b   # survives a reboot
 ```
 
 ```powershell
@@ -811,7 +819,7 @@ without editing code, copy `.env.example` to `.env` and set it there.
 - `LLM_BASE_URL` — where vLLM's OpenAI-compatible API is listening. Default
   `http://localhost:8000/v1`.
 - `LLM_MODEL` — which model vLLM is serving. Default
-  `QuantTrio/Qwen3.6-27B-AWQ`. Must match the `--model` the container was
+  `Qwen/Qwen3-14B-AWQ`. Must match the `--model` the container was
   started with.
 - `LLM_TEMPERATURE` / `LLM_TOP_P` / `LLM_TOP_K` — sampling. Defaults `0.7` /
   `0.95` / `20`. **Don't set temperature to 0** — despite being the usual
@@ -1033,7 +1041,7 @@ first. See the troubleshooting entry below.
 ## 14. Troubleshooting & FAQ
 
 **Q: I ran `ask` and it says the LLM server isn't reachable.**
-The vLLM container isn't running, hasn't finished loading (`docker logs vllm`
+The vLLM container isn't running, hasn't finished loading (`docker logs vllm-qwen14b`
 — engine init takes ~60s), or `LLM_BASE_URL`/`LLM_MODEL` don't match how it
 was started. Check `docker ps`, then `curl http://localhost:8000/v1/models`
 directly — you should see your model listed. `cli.py status` should then show

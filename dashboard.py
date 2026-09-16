@@ -268,7 +268,7 @@ def _config_invariants(engine_args: str) -> list[tuple[str, str, bool, str]]:
     rows.append((
         "thinking mode OFF", str(config.LLM_ENABLE_THINKING).lower(),
         config.LLM_ENABLE_THINKING is False,
-        "Qwen3.6 spends the token budget on chain-of-thought and can return "
+        "Qwen3 spends the token budget on chain-of-thought and can return "
         "empty content.",
     ))
     rows.append((
@@ -290,7 +290,8 @@ def engine_args() -> str:
     be judged and say so."""
     try:
         out = subprocess.run(
-            ["docker", "inspect", "vllm", "--format", "{{join .Args \" \"}}"],
+            ["docker", "inspect", config.VLLM_CONTAINER_NAME,
+             "--format", "{{join .Args \" \"}}"],
             capture_output=True, text=True, timeout=5)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return ""
@@ -492,8 +493,9 @@ def _live_body() -> None:
             st.error(f"INVARIANT VIOLATED — {name} (found: {actual}). {why}",
                      icon=":material/error:")
     if not args:
-        st.caption("`docker inspect vllm` unavailable, so flag-based invariants "
-                   "could not be checked — the config.py ones above still apply.")
+        st.caption(f"`docker inspect {config.VLLM_CONTAINER_NAME}` unavailable, so "
+                   "flag-based invariants could not be checked — the config.py "
+                   "ones above still apply.")
 
     # --- Host + engine ------------------------------------------------------
     h_col, e_col = st.columns(2, gap="medium")

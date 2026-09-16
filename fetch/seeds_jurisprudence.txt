@@ -12,6 +12,28 @@
 # --- The landmark informed-consent case ---
 Dr. Rubi Li v. Spouses Soliman (G.R. 165279) - Doctrine of Informed Consent | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/37801
 
+# --- More informed-consent jurisprudence (added 2026-09-13) ---
+# Most recent SC application of the Li v. Soliman four-element test: signed
+# consent forms plus testimony that risks were explained defeated the claim —
+# "less risk" was held not to mean "risk-free". Verified full text via
+# elibrary; the SC's own PDF of this decision is a scanned/no-text-layer copy
+# behind a CloudFront 403 that needs a browser UA, so the elibrary HTML below
+# is the better source (real text, no OCR needed).
+Que v. Philippine Heart Center (G.R. 268308) - Informed Consent, Stenting Procedure, Four-Element Test Applied | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/23/69891
+
+# Distinct doctrinal angle none of the above cover: consent BY A GUARDIAN for a
+# patient who cannot consent for himself (an adult ward with a mental age of
+# about 8), for an irreversible-adjacent procedure (bilateral vasectomy). The
+# EN BANC resolution engages RA 10354's "free, informed consent" framework at
+# length (68 mentions of "consent", 92 of "guardian" in the full text) rather
+# than disposing of it purely on the procedural point (the petitioner-nun died
+# during the appeal). Verified full text via elibrary before adding — an
+# unrelated search result once mischaracterized a different case (Ruñez v.
+# Jurado, an SC internal personnel matter with zero mentions of "refuse" and
+# one of "consent") as being on point; always check the actual text, not the
+# search summary.
+Sister Pilar Versoza v. People (G.R. 184535) - Guardian Consent for Sterilization of a Ward Lacking Capacity | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/65765
+
 # --- Core medical-negligence / malpractice standard-of-care cases ---
 Cereno v. Court of Appeals (G.R. 167366) - Physician Negligence Standard | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/55194
 De Jesus v. Dr. Uyloan (G.R. 234851) - Medical Malpractice Elements | https://elibrary.judiciary.gov.ph/thebookshelf/showdocs/1/68121
