@@ -24,7 +24,7 @@ store, and a local LLM. No API keys, no per-question cost.
 common situations to start from ("The hospital won't release my relative's body
 until we pay"), and presents sources in plain language.
 
-![Haven answering a question, with every claim cited to a specific law and section](docs/screenshots/haven-qa.png)
+![Haven answering a question about informed consent, citing the elements test and two Supreme Court decisions](docs/screenshots/haven-qa.png)
 
 ```bash
 streamlit run app.py
