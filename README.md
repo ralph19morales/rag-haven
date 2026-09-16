@@ -72,7 +72,7 @@ sounded good. [`GUIDE.md`](GUIDE.md) documents all of them, including the
 approaches that were tried and abandoned — that's the part hardest to find
 elsewhere. There's also a [published version of the guide][guide-web].
 
-[guide-web]: https://claude.ai/code/artifact/7f184e72-2c36-4811-a437-50087ffa1c10
+[guide-web]: https://claude.ai/artifact/GhGNoVwUzviypm9jNB5oju
 
 ---
 
@@ -81,7 +81,7 @@ elsewhere. There's also a [published version of the guide][guide-web].
 | | |
 |---|---|
 | Python | 3.11+ |
-| GPU / VRAM | **Required.** 24GB (RTX 3090-class) minimum for the 27B model as configured — see [Performance](#performance-expectations) |
+| GPU / VRAM | **Required.** Tested on 24GB (RTX 3090-class); the default model (`Qwen/Qwen3-14B-AWQ`) itself uses ~9.4GB of weights (see [Performance](#performance-expectations)), so 24GB is a comfortable margin rather than a measured floor — a 16GB card would likely work but hasn't been tested |
 | RAM | 16 GB is comfortable — the LLM lives in VRAM now, not system RAM; this covers the OS, Python, and the CPU-side embedding/reranker models |
 | Disk | ~21 GB (LLM weights + embedding model + index) |
 | [vLLM](https://docs.vllm.ai/) (Docker) | serves the LLM locally over an OpenAI-compatible API |
@@ -92,7 +92,7 @@ elsewhere. There's also a [published version of the guide][guide-web].
 ## Quick start
 
 ```bash
-git clone <your-fork-url> && cd philippine-medical-law
+git clone https://github.com/momztech/rag-haven.git && cd rag-haven
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # ./.venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
@@ -105,11 +105,10 @@ docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
-  --enforce-eager \
   --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
-  --reasoning-parser qwen3               # see HAVEN_VLLM_MIGRATION.md for flag rationale
+  --reasoning-parser qwen3               # see CLAUDE.md "Generation speed" for flag rationale
 
 cp .env.example .env                   # then edit if you want to change models
 ```
@@ -151,7 +150,7 @@ skipped.
 
 ## What's in the corpus
 
-Roughly 154 documents / 7,934 passages across five families:
+Roughly 156 documents / 9,066 passages across five families:
 
 | Family | Contents |
 |---|---|
@@ -184,40 +183,33 @@ cost a full `ingest --reset`.
 
 ## Performance expectations
 
-**Be realistic about this before you clone it.** Measured on an RTX 3090 24GB
-running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (see
-[`HAVEN_VLLM_MIGRATION.md`](HAVEN_VLLM_MIGRATION.md) for the full baseline):
+**Be realistic about this before you clone it.** Current numbers, measured with
+`evals/bench_llm.py` against the running default (`Qwen/Qwen3-14B-AWQ`, RTX 3090 24GB, real
+prompts built from live retrieval):
 
 | Metric | Value |
 |---|---|
-| Weights resident | 19.05 GiB |
-| KV cache available | 2.39 GiB (14,563 tokens) |
+| Weights resident | 9.44 GiB |
+| KV cache available | 12.13 GiB (158,992 tokens) |
+| Max concurrency @ 8K context | 19.41x |
 | Max context per request | 8,192 |
-| Generation throughput | ~19 tok/s |
+| Decode throughput | ~79 tok/s |
+| Time to first token, warm prefix | ~30 ms |
+| Time to first token, cold prefix | ~600-690 ms |
 
-End-to-end, measured on five representative questions through the full
-pipeline (`data/metrics.jsonl` holds both sides of this):
+That headroom is new: the project ran a larger `QuantTrio/Qwen3.6-27B-AWQ` model until the same
+week this table was last measured (see [`HAVEN_VLLM_MIGRATION.md`](HAVEN_VLLM_MIGRATION.md) for
+that baseline — 19.05 GiB weights, ~19 tok/s, and a `--enforce-eager` requirement because CUDA
+graphs and the weights didn't both fit in 24GB). At 9.44 GiB of weights there's room for CUDA
+graphs *and* a full KV cache with no contention, which is why the current launch command
+(see Commands above) no longer passes `--enforce-eager`. The 24GB card is what was tested, not a
+measured floor — the actual footprint here would likely fit a 16GB card, untested.
 
-| | Before | After |
-|---|---|---|
-| Mean time to a complete answer | ~50 s | **~28 s** |
-| Decode throughput | 19.0 tok/s | 19.0 tok/s (see note) |
-| Time to first token | 1941 ms | **~620 ms** |
-| Model load, per process | 15.4 s | 5.6 s (and now off the first question) |
-| Retrieval, HyDE question | 14.9 s | 7.4 s |
+Separately, the retrieval-side latency work below is unaffected by which LLM model is behind
+vLLM — it was measured during the Ollama→vLLM migration and still holds:
 
-Where that came from, largest first:
-
-- **Prefix caching** (`--enable-prefix-caching`, silently off before) — the
-  ~480-token system prompt is identical on every request and was being
-  re-prefilled each time. Time-to-first-token 1941 ms → ~620 ms.
-- **N-gram speculative decoding was tried and reverted.** It gave a genuine
-  1.7x (19 → 33 tok/s) and corrupted the answers: fragments already in the
-  prompt were emitted twice — `"…course of treatment" the treatment`, and once
-  a mangled citation, `G.R. No. 210445,0445`. Measured over 15 answers per
-  config: 7 repeated fragments in 4/15 answers with it on, **0 in 0/15 with it
-  off.** In a tool whose entire value is citations you can check, that is not a
-  trade worth making.
+- **Prefix caching** (`--enable-prefix-caching`) — the ~480-token system prompt is identical on
+  every request; without it, TTFT was 1941 ms under the old Ollama backend.
 - **HyDE draft length** — the draft was writing to its 200-token cap and being
   truncated mid-sentence. Asking for 2-3 sentences cut it to ~95 tokens and
   halved the cost of every question that triggers it (10.5 s → ~4.8 s).
@@ -226,21 +218,21 @@ Where that came from, largest first:
   that is supposed to run entirely offline.
 - **Warming models at startup** and caching the Chroma client and BM25 index
   per process, instead of rebuilding them inside every query.
+- **N-gram speculative decoding was tried (on the 27B model) and reverted** — a genuine 1.7x
+  (19 → 33 tok/s) that corrupted answers: fragments already in the prompt were emitted twice —
+  `"…course of treatment" the treatment`, and once a mangled citation, `G.R. No. 210445,0445`.
+  Measured over 15 answers per config: 7 repeated fragments in 4/15 answers with it on, **0 in 0/15
+  with it off.** It is not configured now, and that finding hasn't been re-tested against the
+  smaller model — don't re-enable it without re-running that comparison.
 
 Remaining levers:
 
 | Change | Effect | Costs you |
 |---|---|---|
-| More VRAM (32GB+) | CUDA graphs *and* the drafter, longer context, real concurrency | Hardware |
+| Raise `--max-num-seqs` | Real concurrency — measured headroom is 19x at 8K context | More requests competing for the same decode throughput |
 | Shorter answers (prompt or `LLM_MAX_TOKENS`) | Linear — answers run 600-900 tokens | Detail in the answer |
 | Lower `TOP_K` | Less to prefill | Less context per answer |
 | `RERANK_ENABLED=false` | ~2.5 s | Ranking quality |
-
-24GB runs 27B-class dense models only with the vision encoder disabled
-(`--limit-mm-per-prompt`) and eager mode on (`--enforce-eager`). CUDA graphs
-would add ~15%, but with 19.05 GiB of weights resident they leave too little KV
-cache for an 8k context and the engine refuses to start — measured at
-`--gpu-memory-utilization` 0.93, 0.95 and 0.96.
 
 ---
 
@@ -275,7 +267,7 @@ number won't save it. `GUIDE.md` §12 has the procedure.
 for t in tests/*.py; do .venv/Scripts/python.exe "$t"; done
 ```
 
-164 checks across 12 files. Every one encodes a bug that shipped once —
+308 checks across 15 files. Every one encodes a bug that shipped once —
 duplicate crowding, the per-source cap, per-clause slot reservation, the
 reranker's fail-open and flat-score guards, the HyDE clause gate, citation
 labelling, the fetcher's retry budget, conversation grounding. They need no
@@ -335,8 +327,7 @@ retrieval safeguards are domain-neutral.
 
 ## Corpus provenance and licensing
 
-The **code** in this repository is yours to license as you choose — add a
-`LICENSE` file before publishing.
+The **code** in this repository is MIT-licensed — see [`LICENSE`](LICENSE).
 
 The **documents** are not included and are not the project's to license. They
 are fetched at build time from [LawPhil](https://lawphil.net) and the

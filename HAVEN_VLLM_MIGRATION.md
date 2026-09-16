@@ -5,6 +5,16 @@
 **Target host:** Ubuntu 24.04 / i9-14900K / RTX 3090 24GB ("AI Box dev machine")
 **Repo:** `~/Documents/rag/rag-haven`
 
+> **Superseded, 2026-09.** This document is a historical record of the Ollama→vLLM migration and
+> the `QuantTrio/Qwen3.6-27B-AWQ` baseline it shipped with — the numbers in §2 (19.05 GiB weights,
+> ~19 tok/s, `--enforce-eager` required) describe that model, not the current one. The project has
+> since switched to the smaller `Qwen/Qwen3-14B-AWQ`, which runs faster and no longer needs
+> `--enforce-eager` (CUDA graphs fit without contention at this model's size). For the current
+> measured numbers and launch command, see the "Generation speed" section of `CLAUDE.md` and the
+> "Performance expectations" section of `README.md`. Everything else here — why thinking mode must
+> stay off, why temperature can't be 0, why speculative decoding was reverted — is still accurate
+> reasoning, just against the older model's numbers.
+
 ---
 
 ## 1. What changed

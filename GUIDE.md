@@ -235,7 +235,7 @@ Command: `python cli.py ask "..."` (or the web UI)
 > **Why separate them?** Reading and embedding documents is slow and only needs
 > to happen when documents change. Answering must be fast and happen on demand.
 > Splitting the work means every question reuses the expensive indexing you did
-> once. The index described here holds **7,934 chunks from 154 documents**.
+> once. The index described here holds **9,066 chunks from 156 documents**.
 
 ---
 
@@ -619,8 +619,9 @@ later.
 A deliberate trade. Benefits: **privacy** (documents never leave the machine),
 **no API keys**, **no per-question cost**, and it works without internet once set
 up. Cost: a GPU with meaningful VRAM (vLLM), a Docker install, and Tesseract for
-OCR. On a 24GB consumer card, generation runs at ~19 tok/s — a complete answer
-lands in roughly 20-30 seconds. Embeddings and reranking still run on
+OCR. On a 24GB consumer card, generation runs at ~79 tok/s with the default
+14B model — a complete answer lands in a few seconds of decode time (longer
+questions with more retrieval or HyDE add a few seconds more). Embeddings and reranking still run on
 CPU regardless of GPU size (see below — they're small enough that it isn't
 worth the VRAM). For legal research over sensitive or proprietary documents,
 privacy plus zero marginal cost is usually the right call — but if you are
@@ -633,17 +634,19 @@ actually ships with, so developing against it — rather than a simpler local
 stand-in — rehearses the real serving path: continuous batching,
 PagedAttention, a containerised CUDA runtime that transfers unchanged to
 client hardware. **Qwen3-14B-AWQ** is a 4-bit-quantized 14B model; AWQ
-leaves embeddings, `lm_head`, layernorms and the vision encoder in FP16. The
-earlier default here was `Qwen3.6-27B-AWQ`, whose real resident footprint on
-a 24GB card was measured at **19.05 GiB** — noticeably more than the
-commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number
-and doesn't transfer to vLLM's AWQ path (full baseline in
-`HAVEN_VLLM_MIGRATION.md` §2). That number is specific to the 27B config and
-has not been re-measured for the 14B model — a smaller model needs less
-VRAM, but re-run `evals/bench_llm.py` rather than assuming a ratio. Swap the
-model with one flag (`--model` in the `docker run` command) and matching
-`LLM_MODEL` in `.env`; sizing math for a different model class is in
-`HAVEN_VLLM_MIGRATION.md` §6.
+leaves embeddings, `lm_head`, layernorms and the vision encoder in FP16. Its
+real resident footprint, measured the same way, is **9.44 GiB** — well under
+the **19.05 GiB** the earlier `Qwen3.6-27B-AWQ` default needed on the same
+24GB card (full 27B baseline in `HAVEN_VLLM_MIGRATION.md` §2; the
+commonly-quoted "27B fits in ~17GB" figure is a GGUF/llama.cpp number and
+doesn't transfer to vLLM's AWQ path). The smaller footprint isn't just less
+VRAM used — it removed the contention that used to force `--enforce-eager`:
+with 9.44 GiB of weights there's room for CUDA graphs *and* a full KV cache,
+so the current launch command no longer passes it (see §5 flags below). Swap
+the model with one flag (`--model` in the `docker run` command) and matching
+`LLM_MODEL` in `.env`; re-run `evals/bench_llm.py` after any model swap rather
+than assuming these numbers scale by parameter count. Sizing math for a
+different model class is in `HAVEN_VLLM_MIGRATION.md` §6.
 
 ### Why bge-base for embeddings?
 `BAAI/bge-base-en-v1.5` is a well-regarded open embedding model with a great
@@ -709,7 +712,7 @@ LLM row below dominates the total — see the note after the table):
 |------|------|----------------|
 | Python packages (PyPI) | ~2 GB | `.venv\` |
 | Embedding model `BAAI/bge-base-en-v1.5` | 439 MB | `%USERPROFILE%\.cache\huggingface\hub` |
-| LLM `Qwen/Qwen3-14B-AWQ` (pulled by the vLLM container) | smaller than the ~19 GiB the earlier 27B default needed, but not yet re-measured on this box — check the model card | same Hugging Face cache, mounted into the container |
+| LLM `Qwen/Qwen3-14B-AWQ` (pulled by the vLLM container) | ~9.3 GiB checkpoint (9.44 GiB resident once loaded — smaller than the 19.05 GiB the earlier 27B default needed) | same Hugging Face cache, mounted into the container |
 | Tesseract OCR (optional, scanned PDFs only) | ~60 MB | `C:\Program Files\Tesseract-OCR` (or `apt install tesseract-ocr` on Linux) |
 | The corpus itself (LawPhil / SC E-Library) | 36 MB | `corpus\` |
 
@@ -740,11 +743,12 @@ separately.
 
 ```bash
 # 2. vLLM — needs Docker + an NVIDIA GPU. Pulls the model on first run; the
-#    flags matter (see HAVEN_VLLM_MIGRATION.md §5 for why each one is there —
-#    most claw back VRAM vLLM would otherwise waste on unused multimodal
-#    support). These were tuned for the earlier Qwen3.6-27B-AWQ default;
-#    re-check gpu-memory-utilization/max-num-seqs against evals/bench_llm.py
-#    if you want them re-tuned for the smaller 14B model.
+#    flags matter (see CLAUDE.md's "Generation speed" section for why each one
+#    is there — most claw back VRAM vLLM would otherwise waste on unused
+#    multimodal support). No --enforce-eager: at the 14B model's size, CUDA
+#    graphs capture cleanly alongside a full KV cache (no speculative-decode
+#    drafter competing for VRAM the way there was under the earlier 27B
+#    default) — see HAVEN_VLLM_MIGRATION.md's superseded-note for that history.
 docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -p 8000:8000 \
@@ -753,7 +757,6 @@ docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
-  --enforce-eager \
   --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
@@ -826,9 +829,11 @@ without editing code, copy `.env.example` to `.env` and set it there.
   instinct for factual RAG output, greedy decoding makes Qwen3-family models
   loop on repeated tokens.
 - `LLM_MAX_TOKENS` — caps *total* generation per answer. Default `1024`.
-- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. At ~19 tok/s
-  a long answer takes ~50s, and the default `openai` client timeout
-  (far shorter) would surface as a false retrieval failure.
+- `LLM_TIMEOUT` — client HTTP timeout in seconds. Default `180`. At ~79 tok/s
+  with the current default model a full 1024-token answer takes well under
+  20s, but the margin was set generously (the default `openai` client timeout
+  is far shorter) back when the larger 27B default ran at ~19 tok/s and a long
+  answer took ~50s — it's still safe headroom, just no longer a tight one.
 - `LLM_SEED` — fixed sampling seed for the two calls that feed *retrieval* (the
   HyDE draft and the follow-up rewrite), not for the answer. Without it those
   calls are sampled, which makes the retrieved passages themselves random:
@@ -903,45 +908,54 @@ without editing code, copy `.env.example` to `.env` and set it there.
 
 ## 12b. Why it's slow, and what actually helps
 
-Worth knowing before you judge the system: even on a dedicated GPU, this is
-**single-user readable speed, not interactive-fast.** Measured on an RTX 3090
-24GB running `QuantTrio/Qwen3.6-27B-AWQ` under vLLM (full baseline in
-`HAVEN_VLLM_MIGRATION.md` §2):
+This used to open with "even on a dedicated GPU, this is single-user readable speed, not
+interactive-fast" — true of the project's earlier 27B default (measured on an RTX 3090 24GB
+running `QuantTrio/Qwen3.6-27B-AWQ`; full baseline in `HAVEN_VLLM_MIGRATION.md` §2), and no longer
+true of the current default. Measured with `evals/bench_llm.py` against the running config
+(`Qwen/Qwen3-14B-AWQ`, no `--enforce-eager`, same 24GB card):
 
 | Metric | Value |
 |---|---|
-| Weights resident | 19.05 GiB |
-| KV cache available | 2.39 GiB (14,563 tokens) |
+| Weights resident | 9.44 GiB |
+| KV cache available | 12.13 GiB (158,992 tokens) |
 | Max context per request | 8,192 |
-| Max concurrency @ 8K context | ~1.78× |
-| Generation throughput | ~19 tok/s |
-| Engine init (container startup) | ~60s, one-time |
+| Max concurrency @ 8K context | 19.41× |
+| Generation throughput | ~79 tok/s |
+| Time to first token, warm prefix | ~30 ms |
+| Time to first token, cold prefix | ~600-690 ms |
+| Engine init (container startup) | ~8-14s, one-time |
 
-A 1024-token answer (`LLM_MAX_TOKENS`, the default cap) can take over a
-minute at that rate — which is exactly why `LLM_TIMEOUT` defaults to `180`
-rather than a typical HTTP client's default. Retrieval + reranking is still
-the cheap part of a query by comparison, running in low single-digit seconds
-on CPU.
+A 1024-token answer (`LLM_MAX_TOKENS`, the default cap) now takes well under 15 seconds of decode
+— down from the "can take over a minute" of the 27B era, which is why `LLM_TIMEOUT` still defaults
+to a generous `180` even though the tight margin that number was originally sized for no longer
+applies. Retrieval + reranking is still cheap by comparison, running in low single-digit seconds on
+CPU — with generation this much faster, it's now a larger share of total wall-clock than before,
+not because it got slower but because generation got faster around it.
 
-Two things haven't been measured yet on this stack and are worth doing
-yourself before trusting a number here: **prefill rate** (how fast the model
-reads the retrieved-passages prompt before it starts writing — under the old
-CPU/Ollama setup this was roughly half the wall clock and scaled with
-`TOP_K`, not model size; a GPU almost certainly narrows that gap but it
-hasn't been re-measured), and **time-to-first-token** as experienced in the
-UI. Per this guide's own rule in §15 — if you touch a threshold, measure it —
-the same applies to performance claims: don't take the table above as the
-last word on *your* hardware.
+**Prefill rate** (how fast the model reads the retrieved-passages prompt before it starts writing)
+still hasn't been isolated from total wall-clock on this stack — the table above times full
+generations, not prefill alone. Per this guide's own rule in §15 — if you touch a threshold,
+measure it — the same applies to performance claims: don't take the table above as the last word on
+*your* hardware, and re-run `evals/bench_llm.py` after any model or flag change rather than
+assuming a ratio from these numbers.
 
 Levers, roughly in order of value:
 
 | Change | Effect | Costs you |
 |---|---|---|
+| Raise `--max-num-seqs` | real concurrency — measured headroom is 19× at 8K context, and it's currently capped at 2 | more requests sharing the same decode throughput |
 | More VRAM (32GB+) | room for a MoE-class model, longer context, more concurrency | hardware |
 | Lower `TOP_K` | less prompt to prefill | less context per answer |
 | Lower `LLM_MAX_TOKENS` | linear | shorter answers |
 | `RERANK_ENABLED=false` | ~2.5s | ranking quality |
-| Remove `--enforce-eager` (see §5 flags) | ~15-20% more throughput | more VRAM than this card has: measured, CUDA graphs and the n-gram drafter cannot both fit, and the drafter is worth more |
+
+`--enforce-eager` is no longer part of the launch command (see §5 flags) — at the 14B model's
+footprint, CUDA graphs capture cleanly alongside a full KV cache, so there's no longer a tradeoff
+here to make. That wasn't true of the 27B default: measured, CUDA graphs and the n-gram
+speculative-decode drafter competed for the same VRAM and could not both fit, which is why eager
+mode used to be required and speculative decoding used to be the one worth keeping. Speculative
+decoding isn't configured at all now (see the reverted-and-not-retested note in CLAUDE.md's
+"Generation speed" section), so that specific tradeoff no longer applies either.
 
 ### Don't benchmark against yourself
 The failure mode that actually bit this project, not a hypothetical one:
@@ -963,7 +977,7 @@ chasing a crash as if it were a logic bug.
 
 ## 13. The corpus: what's inside and how to grow it
 
-The index described here holds **7,934 chunks from 154 documents**, spanning five
+The index described here holds **9,066 chunks from 156 documents**, spanning five
 sources:
 
 - **Statutes** (from LawPhil): the Medical Act of 1959, the UHC Act,
@@ -1181,7 +1195,7 @@ Natural directions once the basics are clear, roughly easiest first:
    when tuning `HYDE_CLAUSE_MIN_SIM`: scoring every clause of a question gave
    total overlap, scoring only its *asks* separated cleanly and the threshold
    fell out on its own.
-4. **Run the tests after changing the engine** — `tests/` holds 164 checks, each
+4. **Run the tests after changing the engine** — `tests/` holds 308 checks, each
    encoding a bug that shipped once (duplicate crowding, the per-source cap,
    per-ask slot reservation, the reranker's fail-open and flat-score guards, the
    HyDE clause gate, citation labelling, the fetcher's retry budget). Add a case
@@ -1195,9 +1209,12 @@ Natural directions once the basics are clear, roughly easiest first:
 6. **Improve citations** — parse section numbers even more precisely, or add
    clickable links back to the source documents in the web UI.
 7. **Try a different LLM** — swap `--model` in the vLLM `docker run` command
-   and match `LLM_MODEL` in `.env`. Sizing is the real constraint: a 24GB card
-   fits a 27B-dense model with the vision encoder disabled and eager mode on;
-   a 35B-class MoE needs 32GB+. See `HAVEN_VLLM_MIGRATION.md` §6 for the
+   and match `LLM_MODEL` in `.env`. Sizing is the real constraint: the current
+   14B default leaves most of a 24GB card free (9.44 GiB weights resident); a
+   24GB card can still go up to a 27B-dense model with the vision encoder
+   disabled, though that size needs `--enforce-eager` again once speculative
+   decoding or CUDA graphs compete for the same VRAM (see §12b), and a
+   35B-class MoE needs 32GB+. See `HAVEN_VLLM_MIGRATION.md` §6 for the
    measured boundary before assuming a bigger model just drops in.
 
 ### The one-paragraph recap to lock it in

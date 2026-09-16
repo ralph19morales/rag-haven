@@ -23,12 +23,15 @@ docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface -p 8000:8000 \
   vllm/vllm-openai:latest --model Qwen/Qwen3-14B-AWQ \
   --max-model-len 8192 --gpu-memory-utilization 0.93 --max-num-seqs 2 \
-  --enforce-eager --enable-prefix-caching \
+  --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 --reasoning-parser qwen3
 # Every flag here is load-bearing — read "Generation speed" below before
 # changing any of them. In particular, do NOT add --speculative-config: it was
-# tried, it was fast, and it corrupted answers. See below.
+# tried on the previous (27B) model, it was fast, and it corrupted answers. See
+# below. No --enforce-eager: at this model's size CUDA graphs capture cleanly
+# alongside a full KV cache (there's no speculative-decode drafter competing
+# for VRAM), so eager mode was dropped once the model changed — see below.
 
 # Index the corpus (required before ask/chat/app.py return anything)
 python cli.py ingest            # add & update
@@ -134,36 +137,50 @@ Three non-obvious sampling requirements in `ragmed/config.py` / `ragmed/llm.py`,
 ### Generation speed — why these vLLM flags, and what was measured
 
 Answering is dominated by decode, so the launch flags above matter more than anything in Python.
-Measured on this box (RTX 3090, i9-14900KF), real prompts, token counts taken from the server's
-`usage` block rather than by counting SSE chunks:
+The numbers below are current, measured against the running default (`Qwen/Qwen3-14B-AWQ`, no
+`--enforce-eager`) on this box (RTX 3090, i9-14900KF) via `evals/bench_llm.py`, real prompts built
+from live retrieval, token counts from the server's `usage` block rather than by counting SSE
+chunks:
 
-| Config | Decode | TTFT (warm prefix) |
-|---|---|---|
-| Original (`--enforce-eager`, no prefix caching) | 19.0 tok/s | 1941 ms |
-| With ngram `--speculative-config` — **REVERTED, see below** | 32.4 tok/s | 623 ms |
-| Current (`--enable-prefix-caching`, no spec decode) | ~19 tok/s | ~620 ms |
+| Metric | Value |
+|---|---|
+| Weights resident | **9.44 GiB** |
+| KV cache available | **12.13 GiB** (158,992 tokens) |
+| Max concurrency @ 8K context | **19.41x** |
+| Decode throughput | **~79 tok/s** |
+| TTFT, warm prefix (cache hit) | **~30 ms** |
+| TTFT, cold prefix | **~600-690 ms** |
 
-- **N-gram speculative decoding was removed after it corrupted answers.** It was genuinely 1.7x,
-  and it broke the output: fragments already present in the prompt got emitted twice. Measured
-  over 15 answers per config on the same questions — **7 repeated fragments in 4/15 answers with
-  it on, 0 in 0/15 with it off.** Real examples: `"…course of treatment" the treatment`,
-  `**Whatever grave risks of injury** of injury`, and a mangled case number `G.R. No. 210445,0445`.
-  A corrupted citation in a legal answer costs more than the speed is worth. **Do not re-enable it
-  without re-running that comparison** (`scratchpad/frag_check.py` in the session notes, or
-  re-derive: count 1-4 word fragments repeated back-to-back).
-- **`--enable-prefix-caching` stays** — it was silently `False` before, is a pure win, and is
-  responsible for the TTFT drop (the ~480-token system prompt is identical on every request).
-- **Beware benchmarking decode by counting streamed chunks.** With spec decode several accepted
-  tokens arrive in one chunk, so chunk-counting reported ~16 tok/s and made the (real, but
-  unusable) 1.7x look like a regression. Use `stream_options={"include_usage": True}`.
-- **`--enforce-eager` stays**, despite the ~15% that CUDA graphs would add. Graphs and the ngram
-  drafter compete for the same VRAM: with 19.05 GiB of weights resident, enabling graphs left
-  0.94 GiB for KV cache against the 1.33 GiB an 8192-token context needs, and the engine refused to
-  start (tried at `--gpu-memory-utilization` 0.93, 0.95 and 0.96). It only fits if `--max-model-len`
-  drops to ~4096, which is too close to the real prompt size (~1.9k tokens + 1024 output + history)
-  to be safe. Speculative decoding is worth more than graphs, so it wins the memory.
-- `--max-model-len 8192` (was 32768) — nothing here comes near 32k, and the smaller window is what
-  leaves room for the drafter.
+This project previously ran a `QuantTrio/Qwen3.6-27B-AWQ` model (see `HAVEN_VLLM_MIGRATION.md`),
+where weights alone took 19.05 GiB and decode ran ~19 tok/s. Switching to the smaller 14B-class
+model (commit "updated model...") didn't just shrink the model — it removed the VRAM pressure that
+drove several of the flags below, so re-read this before assuming an old constraint still holds:
+
+- **N-gram speculative decoding is not configured, and stays that way.** On the previous 27B model
+  it was tried, measured at a genuine 1.7x (19 → 32 tok/s), and reverted: fragments already present
+  in the prompt got emitted twice. Measured over 15 answers per config on the same questions —
+  **7 repeated fragments in 4/15 answers with it on, 0 in 0/15 with it off.** Real examples:
+  `"…course of treatment" the treatment`, `**Whatever grave risks of injury** of injury`, and a
+  mangled case number `G.R. No. 210445,0445`. A corrupted citation in a legal answer costs more than
+  the speed is worth. That finding was never re-tested against the 14B model — don't re-enable
+  `--speculative-config` without re-running that comparison (re-derive: count 1-4 word fragments
+  repeated back-to-back over ~15 answers).
+- **`--enable-prefix-caching` stays** — it was silently `False` before it was first added, is a pure
+  win, and is why a warm-prefix request (the ~480-token system prompt is identical on every request)
+  answers in ~30 ms instead of ~600 ms.
+- **Beware benchmarking decode by counting streamed chunks.** With speculative decoding, several
+  accepted tokens can arrive in one chunk, so chunk-counting under-reports throughput — this is why
+  `evals/bench_llm.py` reads `stream_options={"include_usage": True}` instead. Not currently in play
+  (no spec decode configured) but the trap returns the moment it is re-tried.
+- **`--enforce-eager` was dropped, and CUDA graphs now capture cleanly.** On the 27B model, graphs
+  and the ngram drafter competed for the same VRAM: with 19.05 GiB of weights resident, enabling
+  graphs left only 0.94 GiB for KV cache against the 1.33 GiB an 8192-token context needed, and the
+  engine refused to start. At 9.44 GiB of weights and no drafter to compete with, both PIECEWISE and
+  FULL CUDA graphs capture in well under a second and still leave 12.13 GiB for KV cache — the
+  contention that justified eager mode doesn't exist at this model size. If speculative decoding is
+  ever revisited, re-run this VRAM math before assuming graphs still fit.
+- `--max-model-len 8192` (was 32768 before the vLLM migration) — nothing in this corpus's prompts
+  comes near 32k, and the smaller window leaves more of the KV budget usable per concurrent request.
 - `--cuda-graph-sizes` does **not** exist in vLLM 0.26; passing it makes the container exit on an
   argparse error that looks nothing like one.
 

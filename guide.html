@@ -441,8 +441,8 @@
         </p>
       </figure>
       <div class="facts">
-        <span class="fact"><span class="k">Chunks indexed</span><b>8,600</b></span>
-        <span class="fact"><span class="k">Source documents</span><b>154</b></span>
+        <span class="fact"><span class="k">Chunks indexed</span><b>9,066</b></span>
+        <span class="fact"><span class="k">Source documents</span><b>156</b></span>
         <span class="fact"><span class="k">Source families</span><b>5</b></span>
         <span class="fact"><span class="k">Inference</span><b>On-device</b></span>
       </div>
@@ -496,7 +496,7 @@
           <rect x="30" y="286" width="190" height="62" fill="var(--accent-wash)" stroke="var(--accent)" stroke-width="1.4"/>
           <text x="125" y="309" text-anchor="middle" fill="var(--accent-ink)" font-size="11" font-weight="600">Chroma + BM25</text>
           <text x="125" y="325" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">vectorstore.py — the shared index</text>
-          <text x="125" y="339" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">8,600 chunks, 154 documents</text>
+          <text x="125" y="339" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">9,066 chunks, 156 documents</text>
 
           <!-- ONLINE column -->
           <rect x="290" y="30" width="290" height="50" fill="var(--paper)" stroke="var(--line)"/>
@@ -532,7 +532,7 @@
 
           <rect x="290" y="488" width="290" height="50" fill="var(--paper)" stroke="var(--line)"/>
           <text x="435" y="508" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">vLLM</text>
-          <text x="435" y="524" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">Qwen3.6-27B-AWQ</text>
+          <text x="435" y="524" text-anchor="middle" fill="var(--ink-soft)" font-size="9.5">Qwen3-14B-AWQ</text>
 
           <line x1="435" y1="538" x2="435" y2="562" stroke="var(--ink-faint)" stroke-width="1.1" marker-end="url(#har)"/>
 
@@ -622,7 +622,7 @@
             <tr><td>HyDE</td><td><em>Hypothetical Document Embeddings.</em> When your question is worded nothing like the law, the LLM drafts a short <em>imaginary</em> answer in legal vocabulary and the system searches with that too. You never see the draft — it only supplies terminology your question lacked.</td></tr>
             <tr><td>Top-K</td><td>How many chunks reach the LLM (yours: 6). Every slot spent on a duplicate is a slot the answer doesn't get.</td></tr>
             <tr><td>Bi-encoder vs cross-encoder</td><td>A <strong>bi-encoder</strong> vectorises question and chunk <em>separately</em> — fast enough to search everything, but the chunk's vector never saw your question. A <strong>cross-encoder</strong> reads the pair <em>together</em> — more accurate, far too slow for a corpus. Yours uses the first to find ~30 candidates and the second to order them: <strong>retrieve-then-rerank</strong>.</td></tr>
-            <tr><td>LLM / vLLM</td><td>The model that writes the answer (<code>Qwen3.6-27B-AWQ</code>), served locally by vLLM over an OpenAI-compatible API.</td></tr>
+            <tr><td>LLM / vLLM</td><td>The model that writes the answer (<code>Qwen3-14B-AWQ</code>), served locally by vLLM over an OpenAI-compatible API.</td></tr>
             <tr><td>Grounding</td><td>Forcing the model to answer strictly from provided sources — the defence against <strong>hallucination</strong>, confidently invented information.</td></tr>
             <tr><td>OCR</td><td>Turning a <em>scanned image</em> of text into searchable text. Some PRC PDFs are just photos of pages.</td></tr>
           </tbody>
@@ -656,7 +656,7 @@ LLM writes cited answer → show sources</code></pre>
       </div>
       <div class="note">
         <span class="tag">Why separate them?</span>
-        <p>Reading and embedding is slow and only needed when documents change; answering must be fast and on demand. Splitting the work means every question reuses indexing done once. The index described here holds <strong>8,600 chunks from 154 documents</strong>.</p>
+        <p>Reading and embedding is slow and only needed when documents change; answering must be fast and on demand. Splitting the work means every question reuses indexing done once. The index described here holds <strong>9,066 chunks from 156 documents</strong>.</p>
       </div>
     </section>
 
@@ -704,7 +704,7 @@ LLM writes cited answer → show sources</code></pre>
         <li><strong>If the question doesn't speak the corpus's language — HyDE.</strong> A lay narrative embeds nowhere near terse statutory text and gives BM25 no distinctive words; retrieval returns noise and the system refuses, which <em>looks</em> like honesty and is a bug. So the LLM drafts a short imaginary answer in legal vocabulary and the system searches with that too — forbidden from inventing section numbers, since a fabricated "Article 2200" is a real token BM25 matches hard, aiming retrieval confidently at the wrong law. It fires when the <em>whole question</em> matches poorly <em>and</em> when any single <em>ask</em> does; the second trigger exists because similarity over a whole question is a <strong>maximum</strong>, so one well-matched half hides the other. One question scored a healthy 0.736 on its first half alone, HyDE stayed off, the second half was never retrieved, and the answer <strong>flatly denied a deadline the Rules of Court impose</strong>.</li>
         <li><strong>Remember the conversation.</strong> "And is there a deadline?" carries none of the words that say what it is about, so a dependent follow-up is <em>rewritten into a standalone question before searching</em> — resolving references only, never adding terminology or facts you did not say. And a risk larger here than in an ordinary chatbot: once earlier answers sit in the prompt they become a second apparent source, and the model will cite a provision it "remembers stating" with no retrieved passage behind it. Three defences — the block is labelled <em>"not a source, never cite it"</em>, a prompt rule forbids carrying a citation between turns, and the retrieved passages sit <strong>nearer the question</strong> than the history.</li>
         <li><strong>Build the prompt.</strong> A <strong>system prompt</strong> (answer only from context, cite law &amp; section, admit when the corpus is silent), the <strong>context</strong> (6 chunks, each labelled with its law and section), and <strong>your question</strong>.</li>
-        <li><strong>The LLM writes the answer.</strong> vLLM streams from <code>Qwen3.6-27B-AWQ</code> locally. Sampling is deliberately <em>not</em> greedy (<code>temperature=0.7</code>) — Qwen3-family models loop on repeated tokens under greedy decoding, so temperature-0 "for more factual output" breaks generation here. Thinking mode is off: left on, this reasoning model burns its budget on chain-of-thought and can return no content at all.</li>
+        <li><strong>The LLM writes the answer.</strong> vLLM streams from <code>Qwen3-14B-AWQ</code> locally. Sampling is deliberately <em>not</em> greedy (<code>temperature=0.7</code>) — Qwen3-family models loop on repeated tokens under greedy decoding, so temperature-0 "for more factual output" breaks generation here. Thinking mode is off: left on, this reasoning model burns its budget on chain-of-thought and can return no content at all.</li>
         <li><strong>Show answer + sources</strong>, so every point can be checked.</li>
       </ol>
       <div class="note warn">
@@ -762,8 +762,8 @@ LLM writes cited answer → show sources</code></pre>
       <div class="sec-head"><span class="num serif">§&nbsp;10</span><h2 class="serif">Why each technology</h2></div>
       <h3>Fully local</h3>
       <p>A deliberate trade: privacy, no API keys, no per-question cost, works without internet once set up. The cost is a GPU with meaningful VRAM, Docker, and Tesseract. For legal research over sensitive documents, privacy plus zero marginal cost is usually right; for public documents at high volume a cloud backend is reasonable, and the engine is written to swap.</p>
-      <h3>vLLM + Qwen3.6-27B-AWQ</h3>
-      <p>vLLM is what an appliance deployment actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime. AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the resident footprint is <strong>19.05&nbsp;GiB</strong>, not the commonly-quoted "27B fits in ~17GB" — that is a GGUF/llama.cpp number and doesn't transfer. Swap models with one flag plus a matching <code>LLM_MODEL</code>.</p>
+      <h3>vLLM + Qwen3-14B-AWQ</h3>
+      <p>vLLM is what an appliance deployment actually ships with, so developing against it rehearses the real serving path — continuous batching, PagedAttention, a containerised CUDA runtime. AWQ leaves embeddings, <code>lm_head</code>, layernorms and the vision encoder in FP16, so the resident footprint is <strong>9.44&nbsp;GiB</strong> — well under the 19.05&nbsp;GiB an earlier, larger 27B default needed on the same card, and nowhere near the commonly-quoted "27B fits in ~17GB" figure, which is a GGUF/llama.cpp number and doesn't transfer to vLLM's AWQ path anyway. Swap models with one flag plus a matching <code>LLM_MODEL</code>.</p>
       <h3>bge-base, Chroma, hybrid retrieval</h3>
       <p><code>bge-base-en-v1.5</code> has a good quality-to-speed balance on CPU; go <code>bge-small</code> or <code>bge-large</code> via <code>EMBED_MODEL</code>. Chroma is a local, persistent, zero-config vector database — no separate server. And hybrid retrieval matters especially for law: "RA 2382", "Section 24" must match exactly, while semantic search catches the paraphrases keyword search misses.</p>
       <div class="note warn">
@@ -776,21 +776,20 @@ LLM writes cited answer → show sources</code></pre>
     <section class="doc" id="s11">
       <div class="sec-head"><span class="num serif">§&nbsp;11</span><h2 class="serif">How to actually use it</h2></div>
       <p class="pre-label">vLLM — Docker + an NVIDIA GPU. Every flag is load-bearing.</p>
-      <pre><code>docker run -d --name vllm --gpus all --ipc=host \
+      <pre><code>docker run -d --name vllm-qwen14b --gpus all --ipc=host \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -p 8000:8000 \
   vllm/vllm-openai:latest \
-  --model QuantTrio/Qwen3.6-27B-AWQ \
+  --model Qwen/Qwen3-14B-AWQ \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.93 \
   --max-num-seqs 2 \
-  --enforce-eager \
   --enable-prefix-caching \
   --limit-mm-per-prompt '{"image":0,"video":0}' \
   --kv-cache-dtype fp8_e5m2 \
   --reasoning-parser qwen3
 
-docker update --restart unless-stopped vllm</code></pre>
+docker update --restart unless-stopped vllm-qwen14b</code></pre>
       <p class="pre-label">Everyday commands</p>
       <pre><code>python cli.py status              # index size, is vLLM up?, OCR ready?
 
@@ -851,26 +850,28 @@ streamlit run dashboard.py --server.port 8502   # ops dashboard</code></pre>
     <!-- 12b -->
     <section class="doc" id="s12b">
       <div class="sec-head"><span class="num serif">§&nbsp;12b</span><h2 class="serif">What it costs, and what actually helps</h2></div>
-      <p>This is <strong>single-user speed — fine for research, not a chat toy.</strong> A complete answer lands in roughly 20–30 seconds. It used to take about 50, and the gap is instructive, because almost none of it was the model being slow. Measured on an RTX&nbsp;3090&nbsp;24GB:</p>
+      <p>This section used to open <strong>"single-user speed — fine for research, not a chat toy,"</strong> with a complete answer landing in 20–30 seconds. That was true of the project's original 27B model; it isn't true of the current, smaller default. Measured on the same RTX&nbsp;3090&nbsp;24GB with <code>evals/bench_llm.py</code>:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Metric</th><th>Value</th></tr></thead>
           <tbody>
-            <tr><td>Weights resident</td><td>19.05&nbsp;GiB</td></tr>
-            <tr><td>KV cache available</td><td>2.39&nbsp;GiB (14,563 tokens)</td></tr>
+            <tr><td>Weights resident</td><td>9.44&nbsp;GiB</td></tr>
+            <tr><td>KV cache available</td><td>12.13&nbsp;GiB (158,992 tokens)</td></tr>
             <tr><td>Max context per request</td><td>8,192</td></tr>
-            <tr><td>Generation throughput</td><td>~19 tok/s</td></tr>
-            <tr><td>Time to first token (warm prefix)</td><td>~0.6s</td></tr>
-            <tr><td>Engine init (container startup)</td><td>~60s, one-time</td></tr>
+            <tr><td>Max concurrency @ 8K</td><td>19.4×</td></tr>
+            <tr><td>Generation throughput</td><td>~79 tok/s</td></tr>
+            <tr><td>Time to first token (warm prefix)</td><td>~30&nbsp;ms</td></tr>
+            <tr><td>Time to first token (cold prefix)</td><td>~600–690&nbsp;ms</td></tr>
+            <tr><td>Engine init (container startup)</td><td>~8–14s, one-time</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Three of the four biggest costs had nothing to do with inference:</p>
+      <p>A 1024-token answer now decodes in well under 15 seconds. The retrieval-side fixes below are unrelated to which model sits behind vLLM — they were measured during the original Ollama→vLLM migration and still apply on top of the faster model:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>What was fixed</th><th>Saved</th><th>Why it was there</th></tr></thead>
           <tbody>
-            <tr><td>Prefix caching</td><td>TTFT 1941 → 620 ms</td><td>The ~480-token system prompt is identical on every request and was being re-prefilled every time. It had been silently switched off.</td></tr>
+            <tr><td>Prefix caching</td><td>TTFT 1941 → 620 ms (under the original Ollama backend)</td><td>The ~480-token system prompt is identical on every request and was being re-prefilled every time. It had been silently switched off.</td></tr>
             <tr><td>HyDE draft length</td><td>10.5s → 4.8s</td><td>The draft was writing to its 200-token cap and being truncated mid-sentence — the cap, not the prompt, was setting the length. What HyDE contributes is vocabulary, and that is front-loaded.</td></tr>
             <tr><td>Hugging Face offline mode</td><td>~10s per process</td><td>sentence-transformers revalidated both already-cached local models against huggingface.co on every start — on a system whose entire premise is running offline.</td></tr>
             <tr><td>Warm-up and per-process caching</td><td>~6s off the first question</td><td>Model loading was billed to whoever asked first. Retrieval also rebuilt the Chroma client and re-read the 17MB BM25 index on <em>every query</em>.</td></tr>
@@ -880,12 +881,12 @@ streamlit run dashboard.py --server.port 8502   # ops dashboard</code></pre>
       <p>The general lesson beats the specific fixes: the first profile showed ~19s of "retrieval" on a question that retrieves in about one second. The number was real, but it was measuring model loading, a network round-trip to a service the system is supposed to run without, and an index being rebuilt from disk. <strong>Profile before optimising, and be suspicious when a stage is slow in a way its own logic can't explain.</strong></p>
       <div class="note warn">
         <span class="tag">The optimisation that had to be given back</span>
-        <p>N-gram speculative decoding made generation <strong>1.7× faster</strong> — 19 to 33 tok/s — and was removed anyway, because it corrupted the answers. It drafts tokens copied from the prompt, which suits RAG perfectly since the answer quotes text sitting right there. But fragments came out <em>twice</em>: <code>"…course of treatment" the treatment</code>, and — worst — a case number as <code>G.R. No. 210445,0445</code>. Over 15 answers per configuration on identical questions: <strong>7 repeated fragments across 4 of 15 answers with it on; none with it off.</strong> <strong>A speed-up that damages the output is not a speed-up</strong> — and this one was invisible to every latency benchmark, obvious in the first answer a human read.</p>
+        <p>N-gram speculative decoding made generation <strong>1.7× faster</strong> on the earlier 27B model — 19 to 33 tok/s — and was removed anyway, because it corrupted the answers. It drafts tokens copied from the prompt, which suits RAG perfectly since the answer quotes text sitting right there. But fragments came out <em>twice</em>: <code>"…course of treatment" the treatment</code>, and — worst — a case number as <code>G.R. No. 210445,0445</code>. Over 15 answers per configuration on identical questions: <strong>7 repeated fragments across 4 of 15 answers with it on; none with it off.</strong> <strong>A speed-up that damages the output is not a speed-up</strong> — and this one was invisible to every latency benchmark, obvious in the first answer a human read. Speculative decoding is not configured on the current model either, and that finding hasn't been re-tested against it — don't re-enable it without re-running the comparison.</p>
         <p>A related trap: don't benchmark decode by counting streamed chunks. With speculative decoding several accepted tokens arrive in one chunk, so chunk-counting reported ~16 tok/s and made a real 1.7× look like a regression.</p>
       </div>
       <div class="note">
-        <span class="tag">Why <code>--enforce-eager</code> stays</span>
-        <p>CUDA graphs would buy another ~15% and don't fit. With 19.05&nbsp;GiB resident on a 24&nbsp;GiB card they left 0.94&nbsp;GiB of KV cache against the 1.33&nbsp;GiB an 8k context needs, and the engine refused to start — tried at 0.93, 0.95 and 0.96 utilization. They fit at <code>--max-model-len 4096</code>, but real prompts run ~1.9k tokens plus output plus history, too close to the edge.</p>
+        <span class="tag">Why <code>--enforce-eager</code> no longer appears in the launch command</span>
+        <p>On the earlier 27B model, CUDA graphs and the speculative-decode drafter competed for the same VRAM: with 19.05&nbsp;GiB resident on a 24&nbsp;GiB card, enabling graphs left only 0.94&nbsp;GiB of KV cache against the 1.33&nbsp;GiB an 8k context needed, and the engine refused to start — tried at 0.93, 0.95 and 0.96 utilization. At the current model's 9.44&nbsp;GiB footprint, with no drafter to compete with, CUDA graphs capture cleanly alongside a full 12.13&nbsp;GiB KV cache — the contention that justified eager mode doesn't exist at this size.</p>
       </div>
       <div class="note warn">
         <span class="tag">The bug that speed work uncovered</span>
@@ -896,7 +897,7 @@ streamlit run dashboard.py --server.port 8502   # ops dashboard</code></pre>
     <!-- 13 -->
     <section class="doc" id="s13">
       <div class="sec-head"><span class="num serif">§&nbsp;13</span><h2 class="serif">The corpus: what's inside &amp; how to grow it</h2></div>
-      <p><strong>8,600 chunks from 154 documents</strong>, across five families: <strong>statutes</strong> (Medical Act, UHC Act, anti-hospital-deposit and detention laws, Civil Code, Revised Penal Code); <strong>PRC issuances</strong> (Board Law, Code of Ethics, disciplinary rules — these via OCR); <strong>DOH issuances</strong> (hospital licensing, patients'-rights IRRs, Magna Carta of Public Health Workers); <strong>jurisprudence</strong> (malpractice, informed consent, hospital liability); and <strong>bills &amp; payment</strong> (PhilHealth charter and No-Balance-Billing circulars, HMO cases, senior-citizen and PWD discounts, small claims, and the deceased-patient chain).</p>
+      <p><strong>9,066 chunks from 156 documents</strong>, across five families: <strong>statutes</strong> (Medical Act, UHC Act, anti-hospital-deposit and detention laws, Civil Code, Revised Penal Code); <strong>PRC issuances</strong> (Board Law, Code of Ethics, disciplinary rules — these via OCR); <strong>DOH issuances</strong> (hospital licensing, patients'-rights IRRs, Magna Carta of Public Health Workers); <strong>jurisprudence</strong> (malpractice, informed consent — including a 2025 decision and a guardian-consent case — hospital liability); and <strong>bills &amp; payment</strong> (PhilHealth charter and No-Balance-Billing circulars, HMO cases, senior-citizen and PWD discounts, small claims, and the deceased-patient chain).</p>
       <p>To add more: drop files into <code>corpus/</code> and <code>ingest</code>, or add URLs to a seed file (<code>name | url</code>) and run the fetcher.</p>
       <h3>Check the <em>shape</em> of what you fetched, not just that it downloaded</h3>
       <p>A file can arrive complete, correct and on-topic and still be the wrong <em>shape</em>. Catching either pattern after indexing costs a full rebuild.</p>
@@ -929,7 +930,7 @@ python -c "from ragmed import retriever; [print(
       <h3><code>torch.OutOfMemoryError</code> pointing at <code>embeddings.py</code> or <code>rerank.py</code></h3>
       <p>vLLM reserves most of the GPU on purpose. Embeddings and the reranker are meant to stay on CPU regardless — see §10. If you just fixed exactly this and it's <em>still</em> happening, restart the process running the query.</p>
       <h3>"The LLM server isn't reachable"</h3>
-      <p>The container isn't running, hasn't finished loading (<code>docker logs vllm</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started.</p>
+      <p>The container isn't running, hasn't finished loading (<code>docker logs vllm-qwen14b</code> — engine init takes ~60s), or <code>LLM_BASE_URL</code>/<code>LLM_MODEL</code> don't match how it was started.</p>
       <h3>"The provided corpus does not cover this"</h3>
       <p>The system being <em>honest</em>, not broken. Add the relevant document and re-ingest.</p>
       <h3>A document I added isn't showing up</h3>
@@ -947,7 +948,7 @@ python -c "from ragmed import retriever; [print(
         <li><strong>Tune retrieval</strong> — nudge <code>LEXICAL_WEIGHT</code> up for exact-citation questions. If you touch a threshold, <strong>measure it</strong> (§12).</li>
         <li><strong>Run the tests after changing the engine</strong> — 308 checks. Add a case whenever you fix something.</li>
         <li><strong>Before tuning the reranker</strong>, work out whether your problem is <strong>ordering</strong> (right document, wrong chunk — its job) or <strong>reach</strong> (the chunk was never retrieved — it cannot help). They look identical in a bad answer and need opposite fixes.</li>
-        <li><strong>Try a different LLM</strong> — swap <code>--model</code> and match <code>LLM_MODEL</code>. Sizing is the real constraint: 24GB fits a 27B-dense model with the vision encoder disabled; a 35B-class MoE needs 32GB+.</li>
+        <li><strong>Try a different LLM</strong> — swap <code>--model</code> and match <code>LLM_MODEL</code>. Sizing is the real constraint: the current 14B default leaves most of a 24GB card free; that same card can still go up to a 27B-dense model with the vision encoder disabled (though <code>--enforce-eager</code> comes back once CUDA graphs or speculative decoding compete for VRAM at that size), and a 35B-class MoE needs 32GB+.</li>
       </ol>
       <div class="recap">
         <div class="tag">Lock it in — the one-paragraph recap</div>
@@ -1010,5 +1011,3 @@ python -c "from ragmed import retriever; [print(
   sections.forEach(function (s) { io.observe(s); });
 })();
 </script>
-
-
