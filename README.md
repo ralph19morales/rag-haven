@@ -1,4 +1,6 @@
-# Philippine Medical Law RAG
+# Haven — Philippine Medical Law RAG
+
+**By [Ralph Morales](https://github.com/ralph19morales)** · [github.com/ralph19morales/rag-haven](https://github.com/ralph19morales/rag-haven)
 
 A fully local retrieval-augmented generation system over Philippine medical
 law — statutes, PRC and DOH issuances, and Supreme Court decisions. Ask a
@@ -7,6 +9,24 @@ texts, with the law and section cited for every assertion.
 
 Nothing leaves your machine at query time: local embeddings, a local vector
 store, and a local LLM. No API keys, no per-question cost.
+
+### Why this exists
+
+I built Haven because I believe in a world where anyone, regardless of
+background or income, has instant access to information about their rights —
+so they can protect themselves and the people they love. It's very much a
+work in progress, but it's something I'm genuinely passionate about.
+
+This project is released under the MIT license specifically so that ambition
+can outgrow me: contribute to it, fork it, or build a far better version that
+helps make that vision real — take it and run with it. If it plants even a
+single seed of inspiration, it has served its purpose. 🙏
+
+If you build on this or ship something derived from it, a credit back to this
+repo and to me is appreciated (not required by the license, but it's the kind
+of thing that keeps this worth doing). See [Corpus provenance and
+licensing](#corpus-provenance-and-licensing) for what the MIT grant does and
+doesn't cover.
 
 > ### ⚖️ Not legal advice
 > This is a **search and retrieval** tool. It quotes the law back to you; it
@@ -96,7 +116,7 @@ elsewhere. There's also a [published version of the guide][guide-web].
 ## Quick start
 
 ```bash
-git clone https://github.com/momztech/rag-haven.git && cd rag-haven
+git clone https://github.com/ralph19morales/rag-haven.git && cd rag-haven
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
 # ./.venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
@@ -341,5 +361,16 @@ but a particular archive's compilation, formatting and headnotes may not be —
 review those terms before redistributing fetched documents or hosting this
 publicly. The fetcher identifies itself and rate-limits accordingly; please
 keep it that way.
+
+---
+
+## Author
+
+Built by **[Ralph Morales](https://github.com/ralph19morales)**.
+Repo: [github.com/ralph19morales/rag-haven](https://github.com/ralph19morales/rag-haven).
+
+Haven helps people find and understand information — it isn't a substitute
+for a licensed lawyer or doctor when an actual legal or medical decision is on
+the line. See [Not legal advice](#-not-legal-advice) above.
 
 This project is dedicated to my late sister Toni Rose "Chin Chin" Morales
