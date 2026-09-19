@@ -22,9 +22,7 @@ can outgrow me: contribute to it, fork it, or build a far better version that
 helps make that vision real — take it and run with it. If it plants even a
 single seed of inspiration, it has served its purpose. 🙏
 
-If you build on this or ship something derived from it, a credit back to this
-repo and to me is appreciated (not required by the license). See [Corpus provenance and
-licensing](#corpus-provenance-and-licensing) for what the MIT grant does and
+If you build on this or ship something derived from it, see [Corpus provenance and licensing (#corpus-provenance-and-licensing) for what the MIT grant does and
 doesn't cover.
 
 > ### ⚖️ Not legal advice
